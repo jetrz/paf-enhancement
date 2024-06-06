@@ -39,48 +39,50 @@ def parse_paf(paf_path, aux, name):
 
         is_valid, src, dst = False, None, None
         if orientation == '+':
-            if start1 == 0 and start2 == 0 and end1 != len1 and end2 != len2:
+            if start1 == 0 and start2 == 0:
                 rejected += 1
                 pass
-            elif end1 == len1 and end2 == len2 and start1 != 0 and start2 != 0:
+            elif end1 == len1 and end2 == len2:
                 rejected += 1
                 pass
             elif end1 == len1 and start2 == 0:
                 src, dst = (id1, '+'), (id2, '+')
+                src_rev, dst_rev = (id2, '-'), (id1, '-')
                 is_valid = True
             elif start1 == 0 and end2 == len2:
-                src, dst = (id2, '-'), (id1, '-')
+                src, dst = (id2, '+'), (id1, '+')
+                src_rev, dst_rev = (id1, '-'), (id2, '-')
                 is_valid = True 
         else:
-            if start1 == 0 and end2 == len2 and end1 != len1 and start2 != 0:
+            if start1 == 0 and end2 == len2:
                 rejected += 1
                 pass
-            elif end1 == len1 and start2 == 0 and start1 != 0 and end2 != len2:
+            elif end1 == len1 and start2 == 0:
                 rejected += 1
                 pass
             elif end1 == len1 and end2 == len2:
                 src, dst = (id1, '+'), (id2, '-')
+                src_rev, dst_rev = (id2, '+'), (id1, '-')
                 is_valid = True
             elif start1 == 0 and start2 == 0:
                 src, dst = (id1, '-'), (id2, '+')
+                src_rev, dst_rev = (id2, '-'), (id1, '+')
                 is_valid = True
 
         if is_valid:
             start1, end1, start2, end2 = int(start1), int(end1), int(start2), int(end2)
             read_seqs, read_to_node, annotated_fasta_data = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data']
 
+            src_id, dst_id = src[0], dst[0]
             if src[1] == '+' and dst[1] == '+':
-                src_seq = read_seqs[read_to_node[id1][0]] if id1 in read_to_node else annotated_fasta_data[id1][0]
-                dst_seq = read_seqs[read_to_node[id2][0]] if id2 in read_to_node else annotated_fasta_data[id2][0]
-            elif src[1] == '-' and dst[1] == '-':
-                src_seq = read_seqs[read_to_node[id1][1]] if id1 in read_to_node else annotated_fasta_data[id1][1]
-                dst_seq = read_seqs[read_to_node[id2][1]] if id2 in read_to_node else annotated_fasta_data[id2][1]
+                src_seq = read_seqs[read_to_node[src_id][0]] if src_id in read_to_node else annotated_fasta_data[src_id][0]
+                dst_seq = read_seqs[read_to_node[dst_id][0]] if dst_id in read_to_node else annotated_fasta_data[dst_id][0]
             elif src[1] == '+' and dst[1] == '-':
-                src_seq = read_seqs[read_to_node[id1][0]] if id1 in read_to_node else annotated_fasta_data[id1][0]
-                dst_seq = read_seqs[read_to_node[id2][1]] if id2 in read_to_node else annotated_fasta_data[id2][1]
+                src_seq = read_seqs[read_to_node[src_id][0]] if src_id in read_to_node else annotated_fasta_data[src_id][0]
+                dst_seq = read_seqs[read_to_node[dst_id][1]] if dst_id in read_to_node else annotated_fasta_data[dst_id][1]
             elif src[1] == '-' and dst[1] == '+':
-                src_seq = read_seqs[read_to_node[id1][1]] if id1 in read_to_node else annotated_fasta_data[id1][1]
-                dst_seq = read_seqs[read_to_node[id2][0]] if id2 in read_to_node else annotated_fasta_data[id2][0]
+                src_seq = read_seqs[read_to_node[src_id][1]] if src_id in read_to_node else annotated_fasta_data[src_id][1]
+                dst_seq = read_seqs[read_to_node[dst_id][0]] if dst_id in read_to_node else annotated_fasta_data[dst_id][0]
             else:
                 raise Exception("Unrecognised orientation pairing.")
 
@@ -88,20 +90,30 @@ def parse_paf(paf_path, aux, name):
             edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
             c_ol_similarity = 1 - edit_dist / c_ol_len
 
-            if id1 not in read_to_node:
-                ghosts[src[1]][id1]['outs'].append(id2)
-                ghosts[src[1]][id1]['ol_len_outs'].append(c_ol_len)
-                ghosts[src[1]][id1]['ol_similarity_outs'].append(c_ol_similarity)    
+            if src_id in read_to_node and dst_id in read_to_node:
+                ol_similarity.extend([c_ol_similarity, c_ol_similarity])
+                ol_len.extend([c_ol_len, c_ol_len])
+                valid_src.extend([src, src_rev]) 
+                valid_dst.extend([dst, dst_rev])
 
-            if id2 not in read_to_node:
-                ghosts[dst[1]][id2]['ins'].append(id1)
-                ghosts[dst[1]][id2]['ol_len_ins'].append(c_ol_len)
-                ghosts[dst[1]][id2]['ol_similarity_ins'].append(c_ol_similarity)
+            if src_id not in read_to_node:
+                ghosts[src[1]][src_id]['outs'].append(dst)
+                ghosts[src[1]][src_id]['ol_len_outs'].append(c_ol_len)
+                ghosts[src[1]][src_id]['ol_similarity_outs'].append(c_ol_similarity)   
 
-            if id1 in read_to_node and id2 in read_to_node:
-                ol_similarity.append(c_ol_similarity)
-                ol_len.append(c_ol_len)
-                valid_src.append(src); valid_dst.append(dst)
+                ghosts[dst_rev[1]][src_id]['ins'].append(src_rev)
+                ghosts[dst_rev[1]][src_id]['ol_len_ins'].append(c_ol_len)
+                ghosts[dst_rev[1]][src_id]['ol_similarity_ins'].append(c_ol_similarity)
+
+            if dst_id not in read_to_node:
+                ghosts[dst[1]][dst_id]['ins'].append(src)
+                ghosts[dst[1]][dst_id]['ol_len_ins'].append(c_ol_len)
+                ghosts[dst[1]][dst_id]['ol_similarity_ins'].append(c_ol_similarity)
+
+                ghosts[src_rev[1]][dst_id]['outs'].append(dst_rev)
+                ghosts[src_rev[1]][dst_id]['ol_len_outs'].append(c_ol_len)
+                ghosts[src_rev[1]][dst_id]['ol_similarity_outs'].append(c_ol_similarity)
+
 
         # if rejected % 10 == 0: print("rejected! len1:", len1, " start1: ", start1, " end1:", end1, " len2:", len2, " start2:", start2, " end2:", end2)
 
@@ -156,6 +168,8 @@ def enhance_with_paf(g, aux, name, get_similarities=False):
     #     for ghost_info in v.values():
     #         for i, c_out in enumerate(ghost_info['outs']):
     #             c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
+    #             if c_out in r2n: # this is a valid node in the gfa
+    #                 n_id = r
 
     torch.save(g, f'static/graphs/{name}_enhanced.pt')
 
