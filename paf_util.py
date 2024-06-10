@@ -5,7 +5,12 @@ import pandas as pd
 import pickle
 import edlib
 import torch
+import seaborn as sns
 from tqdm import tqdm
+
+# We have to do this because cannot pickle defaultdicts created by lambda
+def create_list_dd():
+    return defaultdict(list)
 
 def parse_paf(paf_path, aux, name):
     '''
@@ -30,7 +35,7 @@ def parse_paf(paf_path, aux, name):
         rows = f.readlines()
 
     valid_src, valid_dst, ol_len, ol_similarity = [], [], [], []
-    rejected, ghosts = 0, {'+':defaultdict(lambda: defaultdict(list)), '-':defaultdict(lambda: defaultdict(list))}
+    rejected, ghosts = 0, {'+':defaultdict(create_list_dd), '-':defaultdict(create_list_dd)}
     for row in tqdm(rows, ncols=120):
         row = row.strip().split()
 
@@ -162,16 +167,59 @@ def enhance_with_paf(g, aux, name, get_similarities=False):
     g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); 
     if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
 
-    # print("Adding ghost node data...")
-    # ghosts = data['ghost_data']
-    # for v in ghosts.values(): # '+' and '-'
-    #     for ghost_info in v.values():
-    #         for i, c_out in enumerate(ghost_info['outs']):
-    #             c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
-    #             if c_out in r2n: # this is a valid node in the gfa
-    #                 n_id = r
+    print("Parsing ghost node data...")
+    ghosts = data['ghost_data']
+    real_node_ghost_data = defaultdict(create_list_dd)
+    for v in ghosts.values(): # '+' and '-'
+        for ghost_info in tqdm(v.values(), ncols=120):
+            for i, c_out in enumerate(ghost_info['outs']):
+                c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
+                if c_out[0] not in r2n: continue # this is not a valid node in the gfa
 
-    torch.save(g, f'static/graphs/{name}_enhanced.pt')
+                if c_out[1] == '+':
+                    n_id = r2n[c_out[0]][0] 
+                else:
+                    n_id = r2n[c_out[0]][1]
+
+                real_node_ghost_data[n_id]['ol_len_ins'].append(c_ol_len)
+                real_node_ghost_data[n_id]['ol_similarity_ins'].append(c_ol_sim)
+
+            for i, c_in in enumerate(ghost_info['ins']):
+                c_ol_len, c_ol_sim = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i]
+                if c_in[0] not in r2n: continue # this is not a valid node in the gfa
+
+                if c_in[1] == '+':
+                    n_id = r2n[c_in[0]][0] 
+                else:
+                    n_id = r2n[c_in[0]][1]
+
+                real_node_ghost_data[n_id]['ol_len_outs'].append(c_ol_len)
+                real_node_ghost_data[n_id]['ol_similarity_outs'].append(c_ol_sim)
+
+    print("Adding ghost node data...")
+    n_outs, ol_len_outs, ol_similarity_outs, n_ins, ol_len_ins, ol_similarity_ins = torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID))
+    for ind, n_id in tqdm(enumerate(g.N_ID), ncols=120):
+        c_ghost_data = real_node_ghost_data[n_id]
+        if c_ghost_data['ol_len_outs']:
+            c_n_outs = len(c_ghost_data['ol_len_outs'])
+            n_outs[ind] = c_n_outs
+            ol_len_outs[ind] = sum(c_ghost_data['ol_len_outs'])/c_n_outs 
+            ol_similarity_outs[ind] = sum(c_ghost_data['ol_similarity_outs'])/c_n_outs 
+
+        if c_ghost_data['ol_len_ins']:
+            c_n_ins = len(c_ghost_data['ol_len_ins'])
+            n_ins[ind] = c_n_ins
+            ol_len_ins[ind] = sum(c_ghost_data['ol_len_ins'])/c_n_ins
+            ol_similarity_ins[ind] = sum(c_ghost_data['ol_similarity_ins'])/c_n_ins
+
+    g['ghost_n_outs'] = n_outs
+    g['ghost_ol_len_outs'] = ol_len_outs
+    g['ghost_ol_sim_outs'] = ol_similarity_outs
+    g['ghost_n_ins'] = n_ins
+    g['ghost_ol_len_ins'] = ol_len_ins
+    g['ghost_ol_sim_ins'] = ol_similarity_ins
+
+    torch.save(g, f'static/graphs/{name}_ghost.pt')
 
     return g
 
@@ -219,4 +267,24 @@ def analyse(data, name):
     ax.plot(df.index, df['ol_similarity_in_avg'], label='OL Similarity In')
     ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
     plt.savefig(f'static/fig/{name}_ghost_olsim_in.png')
+
+def analyse2(g, name):
+    print("Analysing real node ghost data...")
+    df = pd.DataFrame({ 'count' : g.ghost_n_outs.tolist(), 'ol_len_outs' : g.ghost_ol_len_outs.tolist(), 'ol_sim_outs' : g.ghost_ol_sim_outs.tolist() })
+    df = df.sort_values('count')
+    print("df1:", df)
+    df = df.melt(id_vars='count', value_vars=['ol_len_outs', 'ol_sim_outs'], var_name='variable', value_name='value')
+    print("df2:", df)
+    plt.figure(figsize=(10,6))
+    sns.lineplot(data=df, x='count', y='value', hue='variable')
+    plt.grid(True)
+    plt.savefig(f'static/fig/{name}_real_node_ghost_outs.png')
+
+    df = pd.DataFrame({ 'count' : g.ghost_n_ins.tolist(), 'ol_len_ins' : g.ghost_ol_len_ins.tolist(), 'ol_sim_ins' : g.ghost_ol_sim_ins.tolist() })
+    df = df.sort_values('count')
+    df = df.melt(id_vars='count', value_vars=['ol_len_ins', 'ol_sim_ins'], var_name='variable', value_name='value')
+    plt.figure(figsize=(10,6))
+    sns.lineplot(data=df, x='count', y='value', hue='variable')
+    plt.grid(True)
+    plt.savefig(f'static/fig/{name}_real_node_ghost_ins.png')
 

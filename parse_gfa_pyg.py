@@ -16,7 +16,7 @@ from torch_geometric.utils import subgraph, to_networkx
 import networkx as nx
 
 from parse_fasta import parse_fasta
-from paf_util import parse_paf, enhance_with_paf, analyse
+from paf_util import parse_paf, enhance_with_paf, analyse, analyse2
 
 def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=False, paf_path=None):
     if training:
@@ -484,3 +484,5 @@ if __name__ == "__main__":
 
     g = enhance_with_paf(g, aux, genome, get_similarities=get_similarities)
     print('g after enhance:', g)
+
+    analyse2(g, genome)
