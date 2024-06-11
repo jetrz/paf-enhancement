@@ -1,5 +1,4 @@
-import gzip
-import re
+import gzip, re, sys, os
 from collections import Counter
 from copy import deepcopy
 from datetime import datetime
@@ -10,16 +9,16 @@ from Bio.Seq import Seq
 import torch
 import edlib
 from tqdm import tqdm
-
-from torch_geometric.data import Data
-from torch_geometric.utils import subgraph, to_networkx
-
 import networkx as nx
 
+from torch_geometric.data import Data
+from torch_geometric.utils import to_networkx
+
+from algorithms import process_graph, process_graph_combo
 from parse_fasta import parse_fasta
 from paf_util import parse_paf, enhance_with_paf, analyse, analyse2
 
-def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=False, paf_path=None):
+def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=False, is_hifiasm=True):
     if training:
         print(f'Parsing reads file...')
         if reads_path is not None:
@@ -177,11 +176,17 @@ def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=Fa
             else:
                 raise Exception("Unknown GFA format!")
             
-            edge_index[0].extend([src_real, src_virt])
-            edge_index[1].extend([dst_real, dst_virt])
-            edge_ids[(src_real, dst_real)] = E_ID
-            edge_ids[(src_virt, dst_virt)] = E_ID + 1
-            E_ID += 2
+            if is_hifiasm: # Don't need to manually add reverse complement edge
+                edge_index[0].append(src_real)
+                edge_index[1].append(dst_real)
+                edge_ids[(src_real, dst_real)] = E_ID
+                E_ID += 1
+            else:
+                edge_index[0].extend([src_real, src_virt])
+                edge_index[1].extend([dst_real, dst_virt])
+                edge_ids[(src_real, dst_real)] = E_ID
+                edge_ids[(src_virt, dst_virt)] = E_ID + 1
+                E_ID += 2
 
             # -----------------------------------------------------------------------------------
             # This enforces similarity between the edge and its "virtual pair"
@@ -250,18 +255,9 @@ def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=Fa
     g['prefix_length'] = torch.tensor(prefix_lengths_list)
     g['overlap_length'] = torch.tensor(overlap_lengths_list)
 
-    if get_similarities:
-        overlap_similarities_list = [0]*E_ID
-        for k, e_id in edge_ids.items():
-            overlap_similarities_list[e_id] = overlap_similarities[k]
-        g['overlap_similarity'] = torch.tensor(overlap_similarities_list)
-        aux['overlap_similarities_dict'] = overlap_similarities
-        edge_attrs.append('overlap_similarity')
-
     if training:
         print("Adding training labels...")
         node_attrs.extend(['read_strand', 'read_start', 'read_end', 'read_chr'])
-        edge_attrs.append('y')
 
         # Only convert to list right before creating graph data
         read_strand_list, read_start_list, read_end_list, read_chr_list = [read_strands[i] for i in range(N_ID)], [read_starts[i] for i in range(N_ID)], [read_ends[i] for i in range(N_ID)], [read_chrs[i] for i in range(N_ID)]
@@ -274,12 +270,26 @@ def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=Fa
         aux['read_end_dict'] = read_ends
         aux['read_chr_dict'] = read_chrs
 
+        nx_g = to_networkx(data=g, node_attrs=node_attrs, edge_attrs=edge_attrs)
+
         unique_chrs = set(read_chrs.values())
         if len(unique_chrs) == 1:
-            ms_pos, labels = process_graph(g, aux)
+            ms_pos, labels = process_graph(nx_g)
         else:
-            ms_pos, labels = process_graph_combo(g, aux)
+            ms_pos, labels = process_graph_combo(nx_g)
+        nx.set_edge_attributes(nx_g, labels, 'y')
+        labels = torch.tensor([data['y'] for _, _, data in nx_g.edges(data=True)])
+        
         g['y'] = labels
+        edge_attrs.append('y')
+
+    if get_similarities:
+        overlap_similarities_list = [0]*E_ID
+        for k, e_id in edge_ids.items():
+            overlap_similarities_list[e_id] = overlap_similarities[k]
+        g['overlap_similarity'] = torch.tensor(overlap_similarities_list)
+        aux['overlap_similarities_dict'] = overlap_similarities
+        edge_attrs.append('overlap_similarity')
 
     # Why is this the case? Is it because if there is even a single 'A' file in the .gfa, means the format is all 'S' to 'A' lines?
     if len(read_to_node2) != 0:
@@ -312,186 +322,33 @@ def reverse_graph(g):
     g_copy.edge_index = rev_e_index
     return g_copy
 
-def create_correct_graphs(g, read_start_dict, read_end_dict, read_strand_dict, read_chr_dict):
-    pos_edge_index, neg_edge_index = [[],[]], [[],[]]
-    pos_index, neg_index = [], []
-    pos_n_ids, neg_n_ids = set(), set()
-
-    for edge in g.E_ID:
-        src, dst = g.edge_index[0][edge].item(), g.edge_index[1][edge].item()
-        if read_start_dict[dst] < read_end_dict[src] and read_start_dict[dst] > read_start_dict[src]:
-            if read_strand_dict[src] == 1 and read_strand_dict[dst] == 1 and read_chr_dict[src] == read_chr_dict[dst]:
-                pos_index.append(edge); pos_n_ids.add(src); pos_n_ids.add(dst); pos_edge_index[0].append(src); pos_edge_index[1].append(dst)
-
-        if read_start_dict[src] < read_end_dict[dst] and read_start_dict[src] > read_start_dict[dst]:
-            if read_strand_dict[src] == -1 and read_strand_dict[dst] == -1 and read_chr_dict[src] == read_chr_dict[dst]:
-                neg_index.append(edge); neg_n_ids.add(src), neg_n_ids.add(dst); neg_edge_index[0].append(src); neg_edge_index[1].append(dst)
-
-    # Do you need node and edge features for this?
-    pos_graph = Data(N_ID=torch.tensor([i for i in pos_n_ids]), E_ID=torch.tensor(pos_index), edge_index=torch.tensor(pos_edge_index))
-    neg_graph = Data(N_ID=torch.tensor([i for i in neg_n_ids]), E_ID=torch.tensor(neg_index), edge_index=torch.tensor(neg_edge_index))
-    return pos_graph, neg_graph
-
-def create_correct_graphs_combo(g, read_start_dict, read_end_dict, read_strand_dict, read_chr_dict):
-    # only real connections of true overlaps
-    unique_chr = set([v.item() for k, v in read_chr_dict.items()])
-
-    pos_edges, neg_edges = {chr: [] for chr in unique_chr}, {chr: [] for chr in unique_chr}
-    pos_graphs, neg_graphs = {}, {}
-
-    for edge in g.E_ID:
-        src, dst = g.edge_index[0][edge].item(), g.edge_index[1][edge].item()
-        if read_start_dict[dst] < read_end_dict[src] and read_start_dict[dst] > read_start_dict[src]:
-            if read_strand_dict[src] == 1 and read_strand_dict[dst] == 1 and read_chr_dict[src] == read_chr_dict[dst]:
-                pos_edges[read_chr_dict[src].item()].append(edge)
-
-        if read_start_dict[src] < read_end_dict[dst] and read_start_dict[src] > read_start_dict[dst]:
-            if read_strand_dict[src] == -1 and read_strand_dict[dst] == -1 and read_chr_dict[src] == read_chr_dict[dst]:
-                neg_edges[read_chr_dict[src].item()].append(edge)
-
-    for chr in unique_chr:
-        c_pos_edges, c_neg_edges = pos_edges[chr], neg_edges[chr]
-
-        pos_edge_index, pos_n_ids = [[],[]], set()
-        for edge in c_pos_edges:
-            src, dst =  g.edge_index[0][edge].item(), g.edge_index[1][edge].item()
-            pos_edge_index[0].append(src)
-            pos_edge_index[1].append(dst)
-            pos_n_ids.add(src); pos_n_ids.add(dst)
-        pos_graph = Data(N_ID=torch.tensor([i for i in pos_n_ids]), E_ID=torch.tensor(c_pos_edges), edge_index=torch.tensor(pos_edge_index))
-        pos_graphs[chr] = pos_graph
-
-        neg_edge_index, neg_n_ids = [[],[]], set()
-        for edge in c_neg_edges:
-            src, dst =  g.edge_index[0][edge].item(), g.edge_index[1][edge].item()
-            neg_edge_index[0].append(src)
-            neg_edge_index[1].append(dst)
-            neg_n_ids.add(src); neg_n_ids.add(dst)
-        neg_graph = Data(N_ID=torch.tensor([i for i in neg_n_ids]), E_ID=torch.tensor(c_neg_edges), edge_index=torch.tensor(neg_edge_index))
-        neg_graphs[chr] = neg_graph
-
-    return pos_graphs, neg_graphs
-
-def get_gt_for_single_strand(g, read_start_dict, read_end_dict, positive=False):
-    all_nodes = set(deepcopy(g.N_ID).tolist())
-    gt_edges = set()
-    if positive:
-        final_node = max(all_nodes, key=lambda x: read_end_dict[x])
-        highest_node_reached = min(all_nodes, key=lambda x: read_end_dict[x])
-    else:
-        final_node = min(all_nodes, key=lambda x: read_start_dict[x])
-        highest_node_reached = max(all_nodes, key=lambda x: read_start_dict[x])
-
-    while all_nodes:
-        if positive:
-            start_node = min(all_nodes, key=lambda x: read_start_dict[x])
-        else:
-            start_node = max(all_nodes, key=lambda x: read_end_dict[x])
-
-        current_graph = Data(E_ID=None, edge_index=None)
-        # try finding a path and report the highest found node during the dfs
-        current_graph.edge_index, current_graph.E_ID = subgraph(subset=torch.tensor(list(all_nodes)), edge_index=g.edge_index, edge_attr=g.E_ID, relabel_nodes=False)
-        nx_g = to_networkx(current_graph)
-        full_component = set(nx.dfs_postorder_nodes(nx_g, source=start_node))
-        full_component.add(start_node)
-        if positive:
-            highest_node_in_component = max(full_component, key=lambda x: read_end_dict[x])
-        else:
-            highest_node_in_component = min(full_component, key=lambda x: read_start_dict[x])
-
-        current_graph.edge_index, current_graph.E_ID = subgraph(subset=torch.tensor(list(full_component)), edge_index=g.edge_index, edge_attr=g.E_ID, relabel_nodes=False)
-        current_graph = reverse_graph(current_graph)
-        nx_g = to_networkx(current_graph)
-        component = set(nx.dfs_postorder_nodes(nx_g, source=highest_node_in_component))
-        component.add(highest_node_in_component)
-        current_graph.edge_index, current_graph.E_ID = subgraph(subset=torch.tensor(list(component)), edge_index=g.edge_index, edge_attr=g.E_ID, relabel_nodes=False)
-
-        # if the path doesnt go further then an already existing chunk - dont add any edges to gt
-        not_reached_highest = (positive and (
-                read_end_dict[highest_node_in_component] < read_end_dict[highest_node_reached])) \
-                            or (not positive and (
-                read_start_dict[highest_node_in_component] > read_start_dict[highest_node_reached]))
-        
-        if len(component) < 2 or not_reached_highest:  # Used to be len(component) <= 2
-            all_nodes = all_nodes.difference(full_component)
-            continue
-        else:
-            highest_node_reached = highest_node_in_component
-
-        gt_edges = set(current_graph.E_ID) | gt_edges
-        if highest_node_reached == final_node: break
-        all_nodes = all_nodes.difference(full_component)
-
-    return gt_edges
-
-def process_graph(g, aux):
-    read_start_dict, read_end_dict, read_strand_dict, read_chr_dict = aux['read_start_dict'], aux['read_end_dict'], aux['read_strand_dict'], aux['read_chr_dict']
-
-    pos_g, neg_g = create_correct_graphs(g, read_start_dict, read_end_dict, read_strand_dict, read_chr_dict)
-    pos_gt_edges = get_gt_for_single_strand(pos_g, read_start_dict, read_end_dict, positive=True)
-    neg_gt_edges = get_gt_for_single_strand(neg_g, read_start_dict, read_end_dict, positive=False)
-
-    gt_edges = neg_gt_edges | pos_gt_edges
-    gt_dict = {}
-    for e in g.E_ID:
-        if e in gt_edges:
-            gt_dict[e] = 1.
-        else:
-            gt_dict[e] = 0.
-
-    return gt_edges, gt_dict
-
-def process_graph_combo(g, aux):
-    read_start_dict, read_end_dict, read_strand_dict, read_chr_dict = aux['read_start_dict'], aux['read_end_dict'], aux['read_strand_dict'], aux['read_chr_dict']
-
-    print(f'Finding correct graphs per chromosome and strand...')
-    pos_g, neg_g = create_correct_graphs_combo(g, read_start_dict, read_end_dict, read_strand_dict, read_chr_dict)
-    print(f'Chromosomes found: {len(pos_g)}')
-
-    gt_edges = set()
-    for chr, pos_g in pos_g.items():
-        print(f'Processing chr{chr}...')
-        pos_gt_edges = get_gt_for_single_strand(pos_g, read_start_dict, read_end_dict, positive=True)
-        gt_edges |= pos_gt_edges
-    for chr, neg_g in neg_g.items():
-        neg_gt_edges = get_gt_for_single_strand(neg_g, read_start_dict, read_end_dict, positive=False)
-        gt_edges |= neg_gt_edges
-
-    gt_dict = {}
-    for e in g.E_ID:
-        if e in gt_edges:
-            gt_dict[e] = 1.
-        else:
-            gt_dict[e] = 0.
-
-    return gt_edges, gt_dict
-
 if __name__ == "__main__":
     # genome = 'arab'
 
-    for i in range(12, 15):
-        genome = f'chr1_M_{i}'        
-        gfa_path = f"datasets/{genome}/{genome}_asm.bp.raw.r_utg.gfa"
-        paf_path = f"datasets/{genome}/{genome}_asm.ovlp.paf"
-        annotated_fasta_path = f"datasets/{genome}/{genome}.fasta"
-        get_similarities = True
+    for chr in [5, 9, 12, 18]:
+        for i in range(10, 15):
+            genome = f'chr{chr}_M_{i}'        
+            gfa_path = f"datasets/{genome}/{genome}_asm.bp.raw.r_utg.gfa"
+            paf_path = f"datasets/{genome}/{genome}_asm.ovlp.paf"
+            annotated_fasta_path = f"datasets/{genome}/{genome}.fasta"
+            get_similarities = True
 
-        print("Starting run for genome:", genome)
+            print("Starting run for genome:", genome)
 
-        g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
-        print('g before enhance:', g)
+            g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
+            print('g before enhance:', g)
 
-        aux['annotated_fasta_data'] = parse_fasta(annotated_fasta_path)
+            aux['annotated_fasta_data'] = parse_fasta(annotated_fasta_path)
 
-        aux['paf_data'] = parse_paf(paf_path, aux, genome)
-        # with open(f'static/pkl/{genome}_paf_data.pkl', 'rb') as f:
-        #     aux['paf_data'] = pickle.load(f)
+            aux['paf_data'] = parse_paf(paf_path, aux, genome)
+            # with open(f'static/pkl/{genome}_paf_data.pkl', 'rb') as f:
+            #     aux['paf_data'] = pickle.load(f)
 
-        analyse(aux['paf_data'], genome)
+            analyse(aux['paf_data'], genome)
 
-        g = enhance_with_paf(g, aux, genome, get_similarities=get_similarities)
-        print('g after enhance:', g)
+            g = enhance_with_paf(g, aux, genome, get_similarities=get_similarities)
+            print('g after enhance:', g)
 
-        analyse2(g, genome)
+            analyse2(g, genome)
 
-        print('Done!\n')
+            print('Done!\n')
