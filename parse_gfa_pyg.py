@@ -3,6 +3,7 @@ import re
 from collections import Counter
 from copy import deepcopy
 from datetime import datetime
+import pickle
 
 from Bio import SeqIO
 from Bio.Seq import Seq
@@ -467,22 +468,30 @@ def process_graph_combo(g, aux):
 
 if __name__ == "__main__":
     # genome = 'arab'
-    genome = 'chr19'
-    gfa_path = f"datasets/{genome}/{genome}_asm.bp.raw.r_utg.gfa"
-    paf_path = f"datasets/{genome}/{genome}_asm.ovlp.paf"
-    annotated_fasta_path = f"datasets/{genome}/{genome}.fasta"
-    get_similarities = True
 
-    g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
-    print('g before enhance:', g)
+    for i in range(12, 15):
+        genome = f'chr1_M_{i}'        
+        gfa_path = f"datasets/{genome}/{genome}_asm.bp.raw.r_utg.gfa"
+        paf_path = f"datasets/{genome}/{genome}_asm.ovlp.paf"
+        annotated_fasta_path = f"datasets/{genome}/{genome}.fasta"
+        get_similarities = True
 
-    aux['annotated_fasta_data'] = parse_fasta(annotated_fasta_path)
+        print("Starting run for genome:", genome)
 
-    aux['paf_data'] = parse_paf(paf_path, aux, genome)
+        g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
+        print('g before enhance:', g)
 
-    analyse(aux['paf_data'], genome)
+        aux['annotated_fasta_data'] = parse_fasta(annotated_fasta_path)
 
-    g = enhance_with_paf(g, aux, genome, get_similarities=get_similarities)
-    print('g after enhance:', g)
+        aux['paf_data'] = parse_paf(paf_path, aux, genome)
+        # with open(f'static/pkl/{genome}_paf_data.pkl', 'rb') as f:
+        #     aux['paf_data'] = pickle.load(f)
 
-    analyse2(g, genome)
+        analyse(aux['paf_data'], genome)
+
+        g = enhance_with_paf(g, aux, genome, get_similarities=get_similarities)
+        print('g after enhance:', g)
+
+        analyse2(g, genome)
+
+        print('Done!\n')

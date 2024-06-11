@@ -1,5 +1,5 @@
 import networkx as nx
-import dgl
+import dgl, sys, os, io, contextlib
 
 def assert_strand(graph, walk):
     org_strand = graph.ndata['read_strand'][walk[0]].item()
@@ -40,6 +40,13 @@ def assert_overlap(graph, walk):
             print(f'nodes not connected: {src}, {dst}')
             print(f'end: {src_start}, start: {dst_end}')
 
+# Disable
+def blockPrint():
+    sys.stdout = open(os.devnull, 'w')
+
+# Restore
+def enablePrint():
+    sys.stdout = sys.__stdout__
 
 def interval_union(name, root):
     graph = dgl.load_graphs(f'{root}/processed/{name}.dgl')[0][0]
@@ -94,7 +101,7 @@ def get_gt_for_single_strand(graph, read_start_dict, read_end_dict, positive=Fal
         # if the path doesnt go further then an already existing chunk - dont add any edges to gt
         not_reached_highest = (positive and (
                     read_end_dict[highest_node_in_component] < read_end_dict[highest_node_reached])) \
-                              or (not positive and (
+                            or (not positive and (
                     read_start_dict[highest_node_in_component] > read_start_dict[highest_node_reached]))
         if len(component) < 2 or not_reached_highest:  # Used to be len(component) <= 2
             all_nodes = all_nodes - full_component
@@ -107,6 +114,7 @@ def get_gt_for_single_strand(graph, read_start_dict, read_end_dict, positive=Fal
         if highest_node_reached == final_node:
             break
         all_nodes = all_nodes - full_component
+
     return gt_edges
 
 

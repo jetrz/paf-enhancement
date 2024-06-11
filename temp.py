@@ -1,10 +1,13 @@
-import gzip
-from Bio import SeqIO
+import torch
+from torch_geometric.data import Data
+from torch_geometric.utils import to_networkx
 
 if __name__ == "__main__":
-    filetype = 'fastq'
-    with gzip.open('CRR302668_p0.22.fastq.gz', 'rt') as handle:
-        reads = SeqIO.parse(handle, filetype)
+    edge_index = torch.tensor([
+    [0, 1, 1, 2, 2, 3],
+    [1, 0, 2, 1, 3, 2],
+    ])
+    data = Data(edge_index=edge_index, num_nodes=4)
+    res = to_networkx(data)
+    print(res)
 
-        read_headers = {read.id: read.description for read in reads}
-        print(len(read_headers))

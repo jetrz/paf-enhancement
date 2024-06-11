@@ -175,6 +175,7 @@ def enhance_with_paf(g, aux, name, get_similarities=False):
             for i, c_out in enumerate(ghost_info['outs']):
                 c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
                 if c_out[0] not in r2n: continue # this is not a valid node in the gfa
+                # print('node found out!')
 
                 if c_out[1] == '+':
                     n_id = r2n[c_out[0]][0] 
@@ -187,6 +188,7 @@ def enhance_with_paf(g, aux, name, get_similarities=False):
             for i, c_in in enumerate(ghost_info['ins']):
                 c_ol_len, c_ol_sim = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i]
                 if c_in[0] not in r2n: continue # this is not a valid node in the gfa
+                # print('node found in!')
 
                 if c_in[1] == '+':
                     n_id = r2n[c_in[0]][0] 
@@ -199,7 +201,7 @@ def enhance_with_paf(g, aux, name, get_similarities=False):
     print("Adding ghost node data...")
     n_outs, ol_len_outs, ol_similarity_outs, n_ins, ol_len_ins, ol_similarity_ins = torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID))
     for ind, n_id in tqdm(enumerate(g.N_ID), ncols=120):
-        c_ghost_data = real_node_ghost_data[n_id]
+        c_ghost_data = real_node_ghost_data[int(n_id)]
         if c_ghost_data['ol_len_outs']:
             c_n_outs = len(c_ghost_data['ol_len_outs'])
             n_outs[ind] = c_n_outs
@@ -248,43 +250,54 @@ def analyse(data, name):
     ax.plot(df.index, df['ol_len_out_avg'], label='OL Len Out')
     ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
     plt.savefig(f'static/fig/{name}_ghost_ollen_out.png')
+    plt.close()
 
     fig, ax = plt.subplots(figsize=(20,10))
     ax.plot(df.index, df['ol_similarity_out_avg'], label='OL Similarity Out')
     ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
     plt.savefig(f'static/fig/{name}_ghost_olsim_out.png')
+    plt.close()
 
-    df = pd.DataFrame(ghost_copy).T
-    df = df[df['in_count'] != 0]
-    df = df.sort_values(by='in_count')
+    # IN GRAPHS WILL BE THE SAME AS OUT GRAPHS
 
-    fig, ax = plt.subplots(figsize=(20,10))
-    ax.plot(df.index, df['ol_len_in_avg'], label='OL Len In')
-    ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
-    plt.savefig(f'static/fig/{name}_ghost_ollen_in.png')
+    # df = pd.DataFrame(ghost_copy).T
+    # df = df[df['in_count'] != 0]
+    # df = df.sort_values(by='in_count')
 
-    fig, ax = plt.subplots(figsize=(20,10))
-    ax.plot(df.index, df['ol_similarity_in_avg'], label='OL Similarity In')
-    ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
-    plt.savefig(f'static/fig/{name}_ghost_olsim_in.png')
+    # fig, ax = plt.subplots(figsize=(20,10))
+    # ax.plot(df.index, df['ol_len_in_avg'], label='OL Len In')
+    # ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
+    # plt.savefig(f'static/fig/{name}_ghost_ollen_in.png')
+
+    # fig, ax = plt.subplots(figsize=(20,10))
+    # ax.plot(df.index, df['ol_similarity_in_avg'], label='OL Similarity In')
+    # ax.set_xlabel('ID'); ax.set_ylabel('Val'); ax.legend()
+    # plt.savefig(f'static/fig/{name}_ghost_olsim_in.png')
 
 def analyse2(g, name):
     print("Analysing real node ghost data...")
     df = pd.DataFrame({ 'count' : g.ghost_n_outs.tolist(), 'ol_len_outs' : g.ghost_ol_len_outs.tolist(), 'ol_sim_outs' : g.ghost_ol_sim_outs.tolist() })
     df = df.sort_values('count')
-    print("df1:", df)
-    df = df.melt(id_vars='count', value_vars=['ol_len_outs', 'ol_sim_outs'], var_name='variable', value_name='value')
-    print("df2:", df)
-    plt.figure(figsize=(10,6))
-    sns.lineplot(data=df, x='count', y='value', hue='variable')
-    plt.grid(True)
-    plt.savefig(f'static/fig/{name}_real_node_ghost_outs.png')
 
-    df = pd.DataFrame({ 'count' : g.ghost_n_ins.tolist(), 'ol_len_ins' : g.ghost_ol_len_ins.tolist(), 'ol_sim_ins' : g.ghost_ol_sim_ins.tolist() })
-    df = df.sort_values('count')
-    df = df.melt(id_vars='count', value_vars=['ol_len_ins', 'ol_sim_ins'], var_name='variable', value_name='value')
-    plt.figure(figsize=(10,6))
-    sns.lineplot(data=df, x='count', y='value', hue='variable')
+    sns.lineplot(data=df, x='count', y='ol_len_outs')
     plt.grid(True)
-    plt.savefig(f'static/fig/{name}_real_node_ghost_ins.png')
+    plt.savefig(f'static/fig/{name}/{name}_rn_ghost_ol_len_outs.png')
+    plt.close()
+    sns.lineplot(data=df, x='count', y='ol_sim_outs')
+    plt.grid(True)
+    plt.savefig(f'static/fig/{name}/{name}_rn_ghost_ol_sim_outs.png')
+    plt.close()
+
+    # IN GRAPHS WILL BE THE SAME AS OUT GRAPHS
+
+    # df = pd.DataFrame({ 'count' : g.ghost_n_ins.tolist(), 'ol_len_ins' : g.ghost_ol_len_ins.tolist(), 'ol_sim_ins' : g.ghost_ol_sim_ins.tolist() })
+    # df = df.sort_values('count')
+    # sns.lineplot(data=df, x='count', y='ol_len_ins')
+    # plt.grid(True)
+    # plt.savefig(f'static/fig/{name}/{name}_rn_ghost_ol_len_ins.png')
+    # plt.close()
+    # sns.lineplot(data=df, x='count', y='ol_sim_ins')
+    # plt.grid(True)
+    # plt.savefig(f'static/fig/{name}/{name}_rn_ghost_ol_sim_ins.png')
+    # plt.close()
 
