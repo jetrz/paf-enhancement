@@ -17,6 +17,7 @@ def parse_paf(paf_path, aux, name):
     ghosts = {
         '+' : {
             read_id : {
+                'read_len' : Read length for this read
                 'outs' : [read_id, ...]
                 'ol_len_outs' : [ol_len, ...],
                 'ol_similarity_outs' : [ol_similarity, ...],
@@ -100,8 +101,10 @@ def parse_paf(paf_path, aux, name):
             edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
             c_ol_similarity = 1 - edit_dist / c_ol_len
             if src[0] == id1:
+                src_len, dst_len = len1, len2
                 c_prefix_len, c_prefix_len_rev = len1-c_ol_len, len2-c_ol_len
             else:
+                src_len, dst_len = len2, len1
                 c_prefix_len, c_prefix_len_rev = len2-c_ol_len, len1-c_ol_len
 
             if src_id in read_to_node and dst_id in read_to_node:
@@ -141,22 +144,26 @@ def parse_paf(paf_path, aux, name):
                 ghosts[src[1]][src_id]['ol_len_outs'].append(c_ol_len)
                 ghosts[src[1]][src_id]['ol_similarity_outs'].append(c_ol_similarity)   
                 ghosts[src[1]][src_id]['prefix_len_outs'].append(c_prefix_len)
+                ghosts[src[1]][src_id]['read_len'] = src_len
 
                 ghosts[dst_rev[1]][src_id]['ins'].append(src_rev)
                 ghosts[dst_rev[1]][src_id]['ol_len_ins'].append(c_ol_len)
                 ghosts[dst_rev[1]][src_id]['ol_similarity_ins'].append(c_ol_similarity)
                 ghosts[dst_rev[1]][src_id]['prefix_len_ins'].append(c_prefix_len_rev)
+                ghosts[dst_rev[1]][src_id]['read_len'] = src_len
 
             if dst_id not in read_to_node:
                 ghosts[dst[1]][dst_id]['ins'].append(src)
                 ghosts[dst[1]][dst_id]['ol_len_ins'].append(c_ol_len)
                 ghosts[dst[1]][dst_id]['ol_similarity_ins'].append(c_ol_similarity)
                 ghosts[dst[1]][dst_id]['prefix_len_ins'].append(c_prefix_len)
+                ghosts[dst[1]][dst_id]['read_len'] = dst_len
 
                 ghosts[src_rev[1]][dst_id]['outs'].append(dst_rev)
                 ghosts[src_rev[1]][dst_id]['ol_len_outs'].append(c_ol_len)
                 ghosts[src_rev[1]][dst_id]['ol_similarity_outs'].append(c_ol_similarity)
                 ghosts[src_rev[1]][dst_id]['prefix_len_outs'].append(c_prefix_len_rev)
+                ghosts[src_rev[1]][dst_id]['read_len'] = dst_len
 
         # if rejected % 10 == 0: print("rejected! len1:", len1, " start1: ", start1, " end1:", end1, " len2:", len2, " start2:", start2, " end2:", end2)
 
@@ -282,8 +289,8 @@ def enhance_with_paf_2(g, aux, get_similarities=False):
 
     print("Enhancing graph...")
     E_ID, N_ID = deepcopy(g.E_ID).tolist(), deepcopy(g.N_ID).tolist()
-    c_n_id, c_e_id = len(E_ID), len(N_ID)
-    edge_index, overlap_length, prefix_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist()
+    c_n_id, c_e_id = len(N_ID), len(E_ID)
+    edge_index, overlap_length, prefix_length, read_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist(), deepcopy(g['read_length']).tolist()
     if get_similarities: overlap_similarity = deepcopy(g['overlap_similarity']).tolist()
     r2n = aux['read_to_node']
     for i in tqdm(range(len(valid_src)), ncols=120):
@@ -309,7 +316,7 @@ def enhance_with_paf_2(g, aux, get_similarities=False):
     print("Parsing & adding ghost node data...")
     ghosts = data['ghost_data']
     for v in ghosts.values(): # '+' and '-'
-        for ghost_info in tqdm(v.values(), ncols=120):
+        for read_id, ghost_info in tqdm(v.items(), ncols=120):
             added = 0
 
             for i, c_out in enumerate(ghost_info['outs']):
@@ -351,16 +358,19 @@ def enhance_with_paf_2(g, aux, get_similarities=False):
                 added += 1
 
             if added > 0:
+                aux['node_to_read'][c_n_id] = read_id
+                read_length.append(ghost_info['read_len'])
                 N_ID.append(c_n_id)
                 c_n_id += 1
             else:
                 print("No edges added for this ghost node. That's weird...")
 
-    g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length)
+    print("Nodes added:", len(N_ID)-g.N_ID.size()[0], "Edges added:", len(E_ID)-g.E_ID.size()[0])
+    g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length); g['read_length'] = torch.tensor(read_length)
     g.E_ID = torch.tensor(E_ID); g.N_ID = torch.tensor(N_ID)
     if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
 
-    return g
+    return g, aux
 
 def analyse(data, name):
     print("Analysing ghost node data...")
