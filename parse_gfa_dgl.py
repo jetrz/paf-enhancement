@@ -9,6 +9,8 @@ import dgl
 import networkx as nx
 import edlib
 from tqdm import tqdm
+import torch
+import pickle
 
 import algorithms
 
@@ -410,7 +412,17 @@ def only_from_gfa(gfa_path, training=False, reads_path=None, get_similarities=Fa
     return graph_dgl, auxiliary
 
 if __name__ == "__main__":
-    gfa_path = 'arab_asm.bp.raw.r_utg.gfa'
-    reads_path = 'CRR302668_p0.22.fastq.gz'
-    g, aux = only_from_gfa(gfa_path=gfa_path, training=True, reads_path=reads_path)
-    print(g)
+    genome = f'chr18_M_14'        
+    gfa_path = f"datasets/{genome}/{genome}_asm.bp.raw.r_utg.gfa"
+    paf_path = f"datasets/{genome}/{genome}_asm.ovlp.paf"
+    annotated_fasta_path = f"datasets/{genome}/{genome}.fasta"
+    get_similarities = True
+    
+    g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
+
+    print("Num nodes:", g.number_of_nodes(), "Num edges:", g.number_of_edges())
+    src, dst = g.edges()
+    edge_index = torch.stack([src, dst], dim=0)
+    edge_index = edge_index.long()
+    ol_sim, ol_len, prefix_len = g.edata['overlap_similarity'].float(), g.edata['overlap_length'].float(), g.edata['prefix_length'].float()
+    torch.save(edge_index, 'dgl_edge_index_temp.pt'); torch.save(ol_sim, 'dgl_ol_sim_temp.pt'); torch.save(ol_len, 'dgl_ol_len_temp.pt'); torch.save(prefix_len, 'dgl_prefix_len_temp.pt')
