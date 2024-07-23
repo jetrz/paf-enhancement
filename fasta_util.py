@@ -1,14 +1,23 @@
 from Bio import SeqIO
 from Bio.Seq import Seq
 from collections import Counter
-import gzip, torch, re
+import gzip, torch, re, pickle
 import networkx as nx
 from tqdm import tqdm
 from torch_geometric.utils import to_networkx
+from multiprocessing import Pool
 
 from algorithms import process_graph, process_graph_combo
 
-def parse_fasta(path, training=False):
+def parse_read(read):
+    description = read.description.split()
+    id = description[0]
+    seqs = (read.seq, str(Seq(read.seq).reverse_complement()))
+    train_desc = read.description
+
+    return id, seqs, train_desc
+
+def parse_fasta(path, name, training=False):
     print("Parsing FASTA...")
     if path.endswith('gz'):
         if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
@@ -24,13 +33,22 @@ def parse_fasta(path, training=False):
     data, train_data = {}, {}
     open_func = gzip.open if path.endswith('.gz') else open
     with open_func(path, 'rt') as handle:
-        for read in tqdm(SeqIO.parse(handle, filetype), ncols=120):
-            description = read.description.split()
-            id = description[0]
-            data[id] = (read.seq, str(Seq(read.seq).reverse_complement()))
+        rows = SeqIO.parse(handle, filetype)
 
-            if training:
-                train_data[id] = read.description
+        with Pool(15) as pool:
+            results = pool.imap(parse_read, rows)
+            for id, seqs, train_desc in tqdm(results, ncols=120):
+                data[id] = seqs
+
+                if training:
+                    train_data[id] = train_desc
+
+    with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl", "wb") as p:
+        pickle.dump(data, p)
+
+    if training:
+        with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_train_fasta_data.pkl", "wb") as p:
+            pickle.dump(train_data, p)
 
     return data, train_data
 

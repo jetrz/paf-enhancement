@@ -40,6 +40,7 @@ def only_from_gfa(gfa_path, get_similarities=False, is_hifiasm=True):
                 raise Exception("Unknown GFA format!")
 
             real_id, virt_id = N_ID, N_ID + 1 # 1+, 1-
+
             N_ID += 2
             read_to_node[s_id] = (real_id, virt_id)
             node_to_read[real_id] = s_id
@@ -66,6 +67,8 @@ def only_from_gfa(gfa_path, get_similarities=False, is_hifiasm=True):
                     read_orientation, utg_to_read = row[3], row[4]
                     s_ids.append((utg_to_read, read_orientation))
                     read_to_node2[utg_to_read] = (real_id, virt_id)
+                    if real_id in (7768, 8256, 33314, 64230) and virt_id in (7769, 8257, 33315, 64231):
+                        print("in only from gfa. real_id:", real_id, "virt_id:", virt_id, "s_id:", s_id, "utg_to_read:", utg_to_read)
 
                 s_id = s_ids
                 node_to_read[real_id] = s_id

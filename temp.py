@@ -1,8 +1,8 @@
-import torch, pickle
+import torch, pickle, os
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 
-if __name__ == "__main__":
+def compare():
     pyg = torch.load('static/graphs/chr18_M_14_ghost.pt')
     dgl_edge_index = torch.load('dgl_edge_index_temp.pt')
     dgl_ol_len = torch.load('dgl_ol_len_temp.pt')
@@ -37,3 +37,19 @@ if __name__ == "__main__":
     two, _ = torch.sort(dgl_prefix_len)
     check = torch.eq(one.float(), two.float()).tolist()
     print("Len:", len(check), "True:", check.count(True), 'False:', check.count(False))
+
+def rename_files(directory, old, new):
+    # List all files in the given directory
+    for filename in os.listdir(directory):
+        # Check if the filename ends with '_ghost.pt'
+        new_filename = filename.replace(old, new)
+        # Create full path to the old and new files
+        old_file = os.path.join(directory, filename)
+        new_file = os.path.join(directory, new_filename)
+        # Rename the file
+        os.rename(old_file, new_file)
+        print(f"Renamed '{filename}' to '{new_filename}'")
+
+
+directory_path = f'static/graphs/ghost2-1/'
+rename_files(directory_path, "ghost2-1_", "")
