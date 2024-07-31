@@ -431,6 +431,8 @@ def parse_paf(paf_path, aux, name):
         '-' : { ... }
     }
     '''
+    print("Parsing paf file...")
+    
     global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ
     READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict'], aux['node_to_read']
 
@@ -443,9 +445,8 @@ def parse_paf(paf_path, aux, name):
     rejected, ghosts = 0, {'+':defaultdict(create_list_dd), '-':defaultdict(create_list_dd)}
     nrows = len(rows)
 
-    print("Parsing paf file...")
-    with Pool(40) as pool:
-        results = pool.imap(parse_row, iter(rows))
+    with Pool(20) as pool:
+        results = pool.imap_unordered(parse_row, iter(rows), chunksize=60)
         for code, data in tqdm(results, total=nrows, ncols=120):
             if code == 0: 
                 CASES[0] += 1
