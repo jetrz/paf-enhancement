@@ -12,7 +12,7 @@ from algorithms import process_graph, process_graph_combo
 def parse_read(read):
     description = read.description.split()
     id = description[0]
-    seqs = (read.seq, str(Seq(read.seq).reverse_complement()))
+    seqs = (str(read.seq), str(Seq(read.seq).reverse_complement()))
     train_desc = read.description
 
     return id, seqs, train_desc
@@ -36,7 +36,7 @@ def parse_fasta(path, name, training=False):
         rows = SeqIO.parse(handle, filetype)
 
         with Pool(15) as pool:
-            results = pool.imap(parse_read, rows)
+            results = pool.imap_unordered(parse_read, rows, chunksize=50)
             for id, seqs, train_desc in tqdm(results, ncols=120):
                 data[id] = seqs
 

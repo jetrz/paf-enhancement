@@ -2,11 +2,13 @@ import argparse
 import pickle
 import torch
 import warnings
+import dgl
 
 from decision_node_util import add_decision_nodes
 from gfa_util import only_from_gfa
 from fasta_util import parse_fasta, add_train_labels
 from paf_util import parse_paf, enhance_with_paf, enhance_with_paf_2, check_duplicate_edges
+from misc_util import pyg_to_dgl
 
 def edge_exists(edge_index, src_id, dst_id):
     # Convert edge_index to a 2D numpy array for easier processing
@@ -16,22 +18,21 @@ def edge_exists(edge_index, src_id, dst_id):
     return any((edge[0] == src_id and edge[1] == dst_id) for edge in edge_pairs)
 
 if __name__ == "__main__":
-    '''
-    Currently, this creates 4 files:
-    - graphs/mode/<name>.pt - Saved graph
-    - pkl/<name>_paf_data.pkl - Saved paf data pickle, if mode != 'default'
-    - pkl/<name>_fasta_data.pkl - Saved fasta data pickle, if mode != 'default'
-    - pkl/<name>_train_fasta_data.pkl - Saved training fasta data pickle, if mode != 'default' and test is False
-    '''
     parser = argparse.ArgumentParser(description="experiment eval script")
     parser.add_argument("--mode", type=str, default='default', help="default, ghost1, ghost1-1, ghost1-2, ghost2, ghost2-1. See README.md for details.")
-    parser.add_argument("--pickle", type=bool, default=False, help="whether or not to use pkl file to load paf data")
     parser.add_argument("--test", type=bool, default=False, help="generate graphs for test or train")
+
+    parser.add_argument("--pickle_gfa", type=bool, default=False, help="whether or not to use pkl file to load gfa data")
+    parser.add_argument("--pickle_fasta", type=bool, default=False, help="whether or not to use pkl file to load fasta data")
+    parser.add_argument("--pickle_paf", type=bool, default=False, help="whether or not to use pkl file to load paf data")
 
     args = parser.parse_args()
     mode = args.mode
-    use_pickle = args.pickle
     is_test = args.test
+
+    pickle_gfa = args.pickle_gfa
+    pickle_fasta = args.pickle_fasta
+    pickle_paf = args.pickle_paf
     warnings.filterwarnings("ignore")
 
     if is_test:
@@ -42,7 +43,7 @@ if __name__ == "__main__":
             'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/chicken/gfa_graphs/full_0.gfa'}
         }
 
-        for i in ['arab', 'chicken', 'chm13', 'mouse']:
+        for i in ['chm13', 'arab', 'chicken', 'mouse']:
             gfa_path = ref[i]['gfa']
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
@@ -51,35 +52,54 @@ if __name__ == "__main__":
             print("Starting run for:", i)
 
             ##### Creates initial graph from GFA. #####
-            g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
+            if pickle_gfa:
+                g = torch.load('../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
+                with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl', 'rb') as f:
+                    aux = pickle.load(f)
+            else:
+                g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
+                torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
+                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl", "wb") as p:
+                    pickle.dump(aux, p)
             print('\ng before enhance:', g, '\n')
 
-            # for i in [(7769, 33315), (33314, 7768), (8257, 64230), (64231, 8256)]:
-            #     print(f"edge exists: {i[0]} -> {i[1]}:", edge_exists(g.edge_index, i[0], i[1]))
 
             ##### Parsing FASTA file, because read start and end data is required for graph enhancement via PAF. Train data is also retrieved for use later potentially. #####
-            if use_pickle:
+            if pickle_fasta:
                 with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{i}_fasta_data.pkl', 'rb') as f:
                     aux['annotated_fasta_data'] = pickle.load(f)
             else:
                 aux['annotated_fasta_data'], _ = parse_fasta(annotated_fasta_path, i, training=False)
 
-            if mode == 'ghost2':
-                if use_pickle:
+            if mode.startswith('ghost'):
+                if pickle_paf:
                     with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{i}_paf_data.pkl', 'rb') as f:
                         aux['paf_data'] = pickle.load(f)
                 else:
                     aux['paf_data'] = parse_paf(paf_path, aux, i)
 
-                aux['node_attrs'].append('is_real_node')
-                aux['edge_attrs'].append('is_real_edge')
-                g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, add_features=True)
+                add_features = True
+
+                if mode == 'ghost2-1':
+                    add_features = False
+
+                if mode != 'ghost2-1':
+                    aux['node_attrs'].append('is_real_node')
+                    aux['edge_attrs'].append('is_real_edge')
+
+                g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, add_features=add_features)
                 print("\ng after ghost enhance:", g, '\n')
 
-            print("check duplicate edges for g:")
-            check_duplicate_edges(g)
+            # print("check duplicate edges for g:")
+            # check_duplicate_edges(g)
 
-            torch.save(g, f'static/graphs/{mode}/{i}.pt')
+            torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{i}.pt')
+            with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{i}_n2s.pkl", "wb") as p:
+                pickle.dump(aux['read_seqs'], p)
+
+            dgl_g = pyg_to_dgl(g, False, mode)
+            dgl.save_graphs(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{i}.dgl', [dgl_g])
+
             print('Done!\n')
     else:
         ref = {}
@@ -88,8 +108,7 @@ if __name__ == "__main__":
         for i in [11,16,17,19,20]:
             ref[i] = [i for i in range(5)]
 
-        # for chr in [1,3,5,9,12,18,11,16,17,19,20]:
-        for chr in [9]:
+        for chr in [1,3,5,9,12,18,11,16,17,19,20]:
             for i in ref[chr]:
                 genome = f'chr{chr}_M_{i}'        
                 gfa_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{genome}_asm.bp.raw.r_utg.gfa"
@@ -104,7 +123,7 @@ if __name__ == "__main__":
                 print('\ng before enhance:', g, '\n')
 
                 ##### Parsing FASTA file, because read start and end data is required for graph enhancement via PAF. Train data is also retrieved for use later potentially. #####
-                if use_pickle:
+                if pickle_fasta:
                     with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{genome}_fasta_data.pkl', 'rb') as f:
                         aux['annotated_fasta_data'] = pickle.load(f)
                     with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{genome}_train_fasta_data.pkl', 'rb') as f:
@@ -114,7 +133,7 @@ if __name__ == "__main__":
 
                 if mode.startswith('ghost'):
                     ###################### Parsing PAF file, and enhancing graph. This does two things: ######################
-                    if use_pickle:
+                    if pickle_paf:
                         with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{genome}_paf_data.pkl', 'rb') as f:
                             aux['paf_data'] = pickle.load(f)
                     else:
@@ -157,10 +176,15 @@ if __name__ == "__main__":
                 params = { "deadends" : {} }
                 g, aux = add_decision_nodes(g, aux, params)
 
-                print("check duplicate edges for g:")
-                check_duplicate_edges(g)
+                # print("check duplicate edges for g:")
+                # check_duplicate_edges(g)
 
                 print('\ng after enhance:', g, '\n')
-                torch.save(g, f'static/graphs/{mode}/{genome}.pt')
+                torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{genome}.pt')
+                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{genome}_n2s.pkl", "wb") as p:
+                    pickle.dump(aux['read_seqs'], p)
+
+                dgl_g = pyg_to_dgl(g, True, mode)
+                dgl.save_graphs(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{genome}.dgl', [dgl_g])
 
                 print('Done!\n')

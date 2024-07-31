@@ -9,7 +9,7 @@ import seaborn as sns
 from tqdm import tqdm
 from multiprocessing import Pool
 
-READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT = None, None, None, None
+READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = None, None, None, None, None
 CASES = { i:0 for i in range(3) }
 
 # We have to do this because cannot pickle defaultdicts created by lambda
@@ -17,7 +17,8 @@ def create_list_dd():
     return defaultdict(list)
 
 def preprocess_rows(rows): 
-    res, dupchecker, utgchecker, duplicates, rejected = [], set(), set(), 0, 0
+    res, dupchecker, utgchecker, ghost_utg_checker = [], set(), set(), { '+' : defaultdict(set), '-' : defaultdict(set) }
+    duplicates, rejected = 0, 0
     print("Preprocessing paf...")
     for row in tqdm(rows, ncols=120):
         row_split = row.strip().split()
@@ -27,49 +28,53 @@ def preprocess_rows(rows):
             duplicates += 1
             continue
         else:
-            # handling excess edges from unitigs
-            if id1 in READ_TO_NODE and id2 in READ_TO_NODE:
-                # nids1, nids2 = READ_TO_NODE[id1], READ_TO_NODE[id2]
-                # if nids1 == nids2:
-                #     duplicates += 1
-                #     continue
-
-                len1, start1, end1, len2, start2, end2 = int(len1), int(start1), int(end1), int(len2), int(start2), int(end2)
-                src, dst = None, None
-                if orientation == '+':
-                    if start1 == 0 and start2 == 0:
-                        rejected += 1
-                        continue
-                    elif end1 == len1 and end2 == len2:
-                        rejected += 1
-                        continue
-                    elif end1 == len1 and start2 == 0:
-                        src, dst = (id1, '+'), (id2, '+')
-                        src_rev, dst_rev = (id2, '-'), (id1, '-')
-                    elif start1 == 0 and end2 == len2:
-                        src, dst = (id2, '+'), (id1, '+')
-                        src_rev, dst_rev = (id1, '-'), (id2, '-')
-                    else:
-                        rejected += 1
-                        continue
+            len1, start1, end1, len2, start2, end2 = int(len1), int(start1), int(end1), int(len2), int(start2), int(end2)
+            src, dst = None, None
+            if orientation == '+':
+                if start1 == 0 and start2 == 0:
+                    rejected += 1
+                    continue
+                elif end1 == len1 and end2 == len2:
+                    rejected += 1
+                    continue
+                elif end1 == len1 and start2 == 0:
+                    src, dst = (id1, '+'), (id2, '+')
+                    src_rev, dst_rev = (id2, '-'), (id1, '-')
+                elif start1 == 0 and end2 == len2:
+                    src, dst = (id2, '+'), (id1, '+')
+                    src_rev, dst_rev = (id1, '-'), (id2, '-')
                 else:
-                    if start1 == 0 and end2 == len2:
-                        rejected += 1
-                        continue
-                    elif end1 == len1 and start2 == 0:
-                        rejected += 1
-                        continue
-                    elif end1 == len1 and end2 == len2:
-                        src, dst = (id1, '+'), (id2, '-')
-                        src_rev, dst_rev = (id2, '+'), (id1, '-')
-                    elif start1 == 0 and start2 == 0:
-                        src, dst = (id1, '-'), (id2, '+')
-                        src_rev, dst_rev = (id2, '-'), (id1, '+')
-                    else:
-                        rejected += 1
-                        continue
+                    rejected += 1
+                    continue
+            else:
+                if start1 == 0 and end2 == len2:
+                    rejected += 1
+                    continue
+                elif end1 == len1 and start2 == 0:
+                    rejected += 1
+                    continue
+                elif end1 == len1 and end2 == len2:
+                    src, dst = (id1, '+'), (id2, '-')
+                    src_rev, dst_rev = (id2, '+'), (id1, '-')
+                elif start1 == 0 and start2 == 0:
+                    src, dst = (id1, '-'), (id2, '+')
+                    src_rev, dst_rev = (id2, '-'), (id1, '+')
+                else:
+                    rejected += 1
+                    continue
 
-                src_id, dst_id = src[0], dst[0]
+            src_id, dst_id = src[0], dst[0]
+
+            # handling edge cases from unitigs
+            if src_id in READ_TO_NODE and dst_id in READ_TO_NODE:
+                nids1, nids2 = READ_TO_NODE[src_id], READ_TO_NODE[dst_id]
+
+                # Overlaps between reads in the same unitig 
+                if nids1 == nids2:
+                    duplicates += 1
+                    continue
+
+                # Overlaps where one or both nodes are unitigs
                 if src[1] == '+' and dst[1] == '+':
                     src_n_id, dst_n_id = READ_TO_NODE[src_id][0], READ_TO_NODE[dst_id][0]
                     src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][1]
@@ -80,12 +85,157 @@ def preprocess_rows(rows):
                     src_n_id, dst_n_id = READ_TO_NODE[src_id][1], READ_TO_NODE[dst_id][0]
                     src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][0]
 
+                src_reads, dst_reads = NODE_TO_READ[src_n_id], NODE_TO_READ[dst_n_id]
+                if isinstance(src_reads, list) and len(src_reads) > 1:
+                    if src_id != src_reads[0][0] and src_id != src_reads[-1][0]:
+                        rejected += 1
+                        continue
+
+                    if src_id == id1:
+                        c_start, c_end, c_len = start1, end1, len1
+                    else:
+                        c_start, c_end, c_len = start2, end2, len2
+
+                    if src_id == src_reads[0][0]:
+                        if src_reads[0][1] == '+':
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                    else:
+                        if src_reads[-1][1] == '+':
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+
+                if isinstance(dst_reads, list) and len(dst_reads) > 1:
+                    if dst_id != dst_reads[0][0] and dst_id != dst_reads[-1][0]:
+                        rejected += 1
+                        continue
+
+                    if dst_id == id1:
+                        c_start, c_end, c_len = start1, end1, len1
+                    else:
+                        c_start, c_end, c_len = start2, end2, len2
+
+                    if dst_id == dst_reads[0][0]:
+                        if dst_reads[0][1] == '+':
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                    else:
+                        if dst_reads[-1][1] == '+':
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+
                 if (src_n_id, dst_n_id) in utgchecker or (src_rev_n_id, dst_rev_n_id) in utgchecker:
-                    if READ_TO_NODE[id1] != READ_TO_NODE[id2]: print("case caught. src_n_id:", src_n_id, "dst_n_id:", dst_n_id)
+                    # if READ_TO_NODE[id1] != READ_TO_NODE[id2]: print("case caught. src_n_id:", src_n_id, "dst_n_id:", dst_n_id)
                     duplicates += 1
                     continue
                 else:
                     utgchecker.add((src_n_id, dst_n_id))
+
+            elif src_id in READ_TO_NODE:
+                if src[1] == '+':
+                    src_n_id = READ_TO_NODE[src_id][0]
+                else:
+                    src_n_id = READ_TO_NODE[src_id][1]
+
+                src_reads = NODE_TO_READ[src_n_id]
+
+                if isinstance(src_reads, list) and len(src_reads) > 1:
+                    if src_id != src_reads[0][0] and src_id != src_reads[-1][0]:
+                        rejected += 1
+                        continue
+
+                    if src_id == id1:
+                        c_start, c_end, c_len = start1, end1, len1
+                    else:
+                        c_start, c_end, c_len = start2, end2, len2
+
+                    if src_id == src_reads[0][0]:
+                        if src_reads[0][1] == '+':
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                    else:
+                        if src_reads[-1][1] == '+':
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+
+                    if src_n_id in ghost_utg_checker[dst[1]][dst_id]:
+                        duplicates += 1
+                        continue
+                    else:
+                        ghost_utg_checker[dst[1]][dst_id].add(src_n_id)
+
+            elif dst_id in READ_TO_NODE:
+                if dst[1] == '+':
+                    dst_n_id = READ_TO_NODE[dst_id][0]
+                else:
+                    dst_n_id = READ_TO_NODE[dst_id][1]
+
+                dst_reads = NODE_TO_READ[dst_n_id]
+
+                if isinstance(dst_reads, list) and len(dst_reads) > 1:
+                    if dst_id != dst_reads[0][0] and dst_id != dst_reads[-1][0]:
+                        rejected += 1
+                        continue
+
+                    if dst_id == id1:
+                        c_start, c_end, c_len = start1, end1, len1
+                    else:
+                        c_start, c_end, c_len = start2, end2, len2
+
+                    if dst_id == dst_reads[0][0]:
+                        if dst_reads[0][1] == '+':
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                    else:
+                        if dst_reads[-1][1] == '+':
+                            if c_end != c_len:
+                                rejected += 1
+                                continue
+                        else:
+                            if c_start != 0:
+                                rejected += 1
+                                continue
+
+                    if dst_n_id in ghost_utg_checker[src[1]][src_id]:
+                        duplicates += 1
+                        continue
+                    else:
+                        ghost_utg_checker[src[1]][src_id].add(dst_n_id)
 
             dupchecker.add((id1, id2))
             res.append(row)
@@ -281,8 +431,8 @@ def parse_paf(paf_path, aux, name):
         '-' : { ... }
     }
     '''
-    global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT
-    READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict']
+    global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ
+    READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict'], aux['node_to_read']
 
     with open(paf_path) as f:
         rows = f.readlines()
@@ -315,156 +465,6 @@ def parse_paf(paf_path, aux, name):
                             ghosts[orient][id][label].extend(curr_data[label])
 
                         ghosts[orient][id]['read_len'] = curr_data['read_len']
-
-    # for row in tqdm(rows, ncols=120):
-    #     row = row.strip().split()
-
-    #     ## What are these last 3 fields? ##
-    #     id1, len1, start1, end1, orientation, id2, len2, start2, end2, _, _, _ = row
-    #     len1, start1, end1, len2, start2, end2 = int(len1), int(start1), int(end1), int(len2), int(start2), int(end2)
-
-    #     src, dst = False, None
-    #     if orientation == '+':
-    #         if start1 == 0 and start2 == 0:
-    #             rejected += 1
-    #             continue
-    #         elif end1 == len1 and end2 == len2:
-    #             rejected += 1
-    #             continue
-    #         elif end1 == len1 and start2 == 0:
-    #             src, dst = (id1, '+'), (id2, '+')
-    #             src_rev, dst_rev = (id2, '-'), (id1, '-')
-    #         elif start1 == 0 and end2 == len2:
-    #             src, dst = (id2, '+'), (id1, '+')
-    #             src_rev, dst_rev = (id1, '-'), (id2, '-')
-    #         else:
-    #             rejected += 1
-    #             continue
-    #     else:
-    #         if start1 == 0 and end2 == len2:
-    #             rejected += 1
-    #             continue
-    #         elif end1 == len1 and start2 == 0:
-    #             rejected += 1
-    #             continue
-    #         elif end1 == len1 and end2 == len2:
-    #             src, dst = (id1, '+'), (id2, '-')
-    #             src_rev, dst_rev = (id2, '+'), (id1, '-')
-    #         elif start1 == 0 and start2 == 0:
-    #             src, dst = (id1, '-'), (id2, '+')
-    #             src_rev, dst_rev = (id2, '-'), (id1, '+')
-    #         else:
-    #             rejected += 1
-    #             continue
-
-    #     src_id, dst_id = src[0], dst[0]
-        
-    #     if src_id not in READ_TO_NODE and dst_id not in READ_TO_NODE: continue
-            
-    #     if src[1] == '+' and dst[1] == '+':
-    #         src_seq = READ_SEQS[READ_TO_NODE[src_id][0]] if src_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[src_id][0]
-    #         dst_seq = READ_SEQS[READ_TO_NODE[dst_id][0]] if dst_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[dst_id][0]
-    #     elif src[1] == '+' and dst[1] == '-':
-    #         src_seq = READ_SEQS[READ_TO_NODE[src_id][0]] if src_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[src_id][0]
-    #         dst_seq = READ_SEQS[READ_TO_NODE[dst_id][1]] if dst_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[dst_id][1]
-    #     elif src[1] == '-' and dst[1] == '+':
-    #         src_seq = READ_SEQS[READ_TO_NODE[src_id][1]] if src_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[src_id][1]
-    #         dst_seq = READ_SEQS[READ_TO_NODE[dst_id][0]] if dst_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[dst_id][0]
-    #     else:
-    #         raise Exception("Unrecognised orientation pairing.")
-
-    #     if src_id in READ_TO_NODE and dst_id in READ_TO_NODE:
-    #         if src[1] == '+' and dst[1] == '+':
-    #             src_n_id, dst_n_id = READ_TO_NODE[src_id][0], READ_TO_NODE[dst_id][0]
-    #             src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][1]
-    #         elif src[1] == '+' and dst[1] == '-':
-    #             src_n_id, dst_n_id = READ_TO_NODE[src_id][0], READ_TO_NODE[dst_id][1]
-    #             src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][0], READ_TO_NODE[dst_rev[0]][1]
-    #         elif src[1] == '-' and dst[1] == '+':
-    #             src_n_id, dst_n_id = READ_TO_NODE[src_id][1], READ_TO_NODE[dst_id][0]
-    #             src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][0]
-
-    #         if src_n_id == dst_n_id:
-    #             # print("Self edge found!")
-    #             continue
-
-    #         if dst_n_id in SUCCESSOR_DICT[src_n_id] or dst_rev_n_id in SUCCESSOR_DICT[src_rev_n_id]:
-    #             # print("Edge already exists!")
-    #             continue
-
-    #         c_ol_len = end1-start1 # overlapping region length might not always be equal between source and target. but we always take source for ol length
-    #         edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
-    #         c_ol_similarity = 1 - edit_dist / c_ol_len
-    #         if src[0] == id1:
-    #             src_len, dst_len = len1, len2
-    #             c_prefix_len, c_prefix_len_rev = len1-c_ol_len, len2-c_ol_len
-    #         else:
-    #             src_len, dst_len = len2, len1
-    #             c_prefix_len, c_prefix_len_rev = len2-c_ol_len, len1-c_ol_len
-
-    #         ol_similarity.extend([c_ol_similarity])
-    #         ol_len.extend([c_ol_len])
-    #         prefix_len.extend([c_prefix_len])
-    #         valid_src.extend([src]) 
-    #         valid_dst.extend([dst])
-    #         aux['successor_dict'][src_n_id].append(dst_n_id)
-
-    #         ol_similarity.extend([c_ol_similarity])
-    #         ol_len.extend([c_ol_len])
-    #         prefix_len.extend([c_prefix_len_rev])
-    #         valid_src.extend([src_rev]) 
-    #         valid_dst.extend([dst_rev])
-    #         aux['successor_dict'][src_rev_n_id].append(dst_rev_n_id)
-
-
-    #     if src_id not in READ_TO_NODE:
-    #         c_ol_len = end1-start1 # overlapping region length might not always be equal between source and target. but we always take source for ol length
-    #         edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
-    #         c_ol_similarity = 1 - edit_dist / c_ol_len
-    #         if src[0] == id1:
-    #             src_len, dst_len = len1, len2
-    #             c_prefix_len, c_prefix_len_rev = len1-c_ol_len, len2-c_ol_len
-    #         else:
-    #             src_len, dst_len = len2, len1
-    #             c_prefix_len, c_prefix_len_rev = len2-c_ol_len, len1-c_ol_len
-
-    #         ghosts[src[1]][src_id]['outs'].append(dst)
-    #         ghosts[src[1]][src_id]['ol_len_outs'].append(c_ol_len)
-    #         ghosts[src[1]][src_id]['ol_similarity_outs'].append(c_ol_similarity)   
-    #         ghosts[src[1]][src_id]['prefix_len_outs'].append(c_prefix_len)
-    #         ghosts[src[1]][src_id]['read_len'] = src_len
-
-    #         ghosts[dst_rev[1]][src_id]['ins'].append(src_rev)
-    #         ghosts[dst_rev[1]][src_id]['ol_len_ins'].append(c_ol_len)
-    #         ghosts[dst_rev[1]][src_id]['ol_similarity_ins'].append(c_ol_similarity)
-    #         ghosts[dst_rev[1]][src_id]['prefix_len_ins'].append(c_prefix_len_rev)
-    #         ghosts[dst_rev[1]][src_id]['read_len'] = src_len
-
-    #     if dst_id not in READ_TO_NODE:
-    #         c_ol_len = end1-start1 # overlapping region length might not always be equal between source and target. but we always take source for ol length
-    #         edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
-    #         c_ol_similarity = 1 - edit_dist / c_ol_len
-    #         if src[0] == id1:
-    #             src_len, dst_len = len1, len2
-    #             c_prefix_len, c_prefix_len_rev = len1-c_ol_len, len2-c_ol_len
-    #         else:
-    #             src_len, dst_len = len2, len1
-    #             c_prefix_len, c_prefix_len_rev = len2-c_ol_len, len1-c_ol_len
-
-    #         ghosts[dst[1]][dst_id]['ins'].append(src)
-    #         ghosts[dst[1]][dst_id]['ol_len_ins'].append(c_ol_len)
-    #         ghosts[dst[1]][dst_id]['ol_similarity_ins'].append(c_ol_similarity)
-    #         ghosts[dst[1]][dst_id]['prefix_len_ins'].append(c_prefix_len)
-    #         ghosts[dst[1]][dst_id]['read_len'] = dst_len
-
-    #         ghosts[src_rev[1]][dst_id]['outs'].append(dst_rev)
-    #         ghosts[src_rev[1]][dst_id]['ol_len_outs'].append(c_ol_len)
-    #         ghosts[src_rev[1]][dst_id]['ol_similarity_outs'].append(c_ol_similarity)
-    #         ghosts[src_rev[1]][dst_id]['prefix_len_outs'].append(c_prefix_len_rev)
-    #         ghosts[src_rev[1]][dst_id]['read_len'] = dst_len
-
-
-    # print("accepted count:", len(valid_src), "rejected count:", rejected, "missing nodes count:", len(ghosts['+'])+len(ghosts['-']))
 
     print("CASES:")
     for i, n in CASES.items():
@@ -531,6 +531,7 @@ def enhance_with_paf(g, aux, get_similarities=False, add_edges=True, add_node_fe
         print("Adding node features...")
         ghosts = data['ghost_data']
         real_node_ghost_data = defaultdict(create_list_dd)
+
         for v in ghosts.values(): # '+' and '-'
             for ghost_info in tqdm(v.values(), ncols=120):
                 for i, c_out in enumerate(ghost_info['outs']):
@@ -618,59 +619,116 @@ def enhance_with_paf_2(g, aux, get_similarities=False, add_features=False):
     print("Adding ghost nodes and edges...")
     ghosts = data['ghost_data']
     edges_added = set()
-    for v in ghosts.values(): # '+' and '-'
-        for read_id, ghost_info in tqdm(v.items(), ncols=120):
-            added = 0
+    fasta_data = aux['annotated_fasta_data']
 
-            for i, c_out in enumerate(ghost_info['outs']):
-                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
-                if c_out[0] not in r2n: continue # this is not a valid node in the gfa
+    for read_id, ghost_info in tqdm(ghosts['+'].items(), ncols=120):
+        added = 0
+        for i, c_out in enumerate(ghost_info['outs']):
+            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
+            if c_out[0] not in r2n: continue # this is not a valid node in the gfa
 
-                if c_out[1] == '+':
-                    n_id = r2n[c_out[0]][0] 
-                else:
-                    n_id = r2n[c_out[0]][1]
-
-                if (c_n_id, n_id) in edges_added: continue
-
-                edge_index[0].append(c_n_id)
-                edge_index[1].append(n_id)
-                overlap_length.append(c_ol_len)
-                prefix_length.append(c_prefix_len)
-                if get_similarities: overlap_similarity.append(c_ol_sim)
-                edges_added.add((c_n_id, n_id))
-                E_ID.append(c_e_id)
-                c_e_id += 1
-                added += 1
-
-            for i, c_in in enumerate(ghost_info['ins']):
-                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
-                if c_in[0] not in r2n: continue # this is not a valid node in the gfa
-
-                if c_in[1] == '+':
-                    n_id = r2n[c_in[0]][0] 
-                else:
-                    n_id = r2n[c_in[0]][1]
-
-                if (n_id, c_n_id) in edges_added: continue
-
-                edge_index[0].append(n_id)
-                edge_index[1].append(c_n_id)
-                overlap_length.append(c_ol_len)
-                prefix_length.append(c_prefix_len)
-                if get_similarities: overlap_similarity.append(c_ol_sim)
-                edges_added.add((n_id, c_n_id))
-                E_ID.append(c_e_id)
-                c_e_id += 1
-                added += 1
-
-            if added > 0:
-                aux['node_to_read'][c_n_id] = read_id
-                read_length.append(ghost_info['read_len'])
-                N_ID.append(c_n_id)
-                c_n_id += 1
+            if c_out[1] == '+':
+                n_id = r2n[c_out[0]][0] 
             else:
-                print("No edges added for this ghost node. That's weird...")
+                n_id = r2n[c_out[0]][1]
+
+            if (c_n_id, n_id) in edges_added: continue
+
+            edge_index[0].append(c_n_id)
+            edge_index[1].append(n_id)
+            overlap_length.append(c_ol_len)
+            prefix_length.append(c_prefix_len)
+            if get_similarities: overlap_similarity.append(c_ol_sim)
+            edges_added.add((c_n_id, n_id))
+            E_ID.append(c_e_id)
+            c_e_id += 1
+            added += 1
+
+        for i, c_in in enumerate(ghost_info['ins']):
+            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
+            if c_in[0] not in r2n: continue # this is not a valid node in the gfa
+
+            if c_in[1] == '+':
+                n_id = r2n[c_in[0]][0] 
+            else:
+                n_id = r2n[c_in[0]][1]
+
+            if (n_id, c_n_id) in edges_added: continue
+
+            edge_index[0].append(n_id)
+            edge_index[1].append(c_n_id)
+            overlap_length.append(c_ol_len)
+            prefix_length.append(c_prefix_len)
+            if get_similarities: overlap_similarity.append(c_ol_sim)
+            edges_added.add((n_id, c_n_id))
+            E_ID.append(c_e_id)
+            c_e_id += 1
+            added += 1
+
+        if added > 0:
+            aux['node_to_read'][c_n_id] = read_id
+            aux['read_seqs'][c_n_id] = fasta_data[read_id][0]
+            read_length.append(ghost_info['read_len'])
+            N_ID.append(c_n_id)
+            c_n_id += 1
+        else:
+            print("No edges added for this ghost node. That's weird...")
+            continue
+
+        ghost_info = ghosts['-'][read_id]
+        if not ghost_info: raise ValueError("Missing reverse comp of ghost node!")
+        added = 0
+
+        for i, c_out in enumerate(ghost_info['outs']):
+            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
+            if c_out[0] not in r2n: continue # this is not a valid node in the gfa
+
+            if c_out[1] == '+':
+                n_id = r2n[c_out[0]][0] 
+            else:
+                n_id = r2n[c_out[0]][1]
+
+            if (c_n_id, n_id) in edges_added: continue
+
+            edge_index[0].append(c_n_id)
+            edge_index[1].append(n_id)
+            overlap_length.append(c_ol_len)
+            prefix_length.append(c_prefix_len)
+            if get_similarities: overlap_similarity.append(c_ol_sim)
+            edges_added.add((c_n_id, n_id))
+            E_ID.append(c_e_id)
+            c_e_id += 1
+            added += 1
+
+        for i, c_in in enumerate(ghost_info['ins']):
+            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
+            if c_in[0] not in r2n: continue # this is not a valid node in the gfa
+
+            if c_in[1] == '+':
+                n_id = r2n[c_in[0]][0] 
+            else:
+                n_id = r2n[c_in[0]][1]
+
+            if (n_id, c_n_id) in edges_added: continue
+
+            edge_index[0].append(n_id)
+            edge_index[1].append(c_n_id)
+            overlap_length.append(c_ol_len)
+            prefix_length.append(c_prefix_len)
+            if get_similarities: overlap_similarity.append(c_ol_sim)
+            edges_added.add((n_id, c_n_id))
+            E_ID.append(c_e_id)
+            c_e_id += 1
+            added += 1
+
+        if added > 0:
+            aux['node_to_read'][c_n_id] = read_id
+            aux['read_seqs'][c_n_id] = fasta_data[read_id][1]
+            read_length.append(ghost_info['read_len'])
+            N_ID.append(c_n_id)
+            c_n_id += 1
+        else:
+            print("No edges added for this reverse comp ghost node. That's weird...")
 
     edges_added, nodes_added = len(E_ID)-g.E_ID.size()[0], len(N_ID)-g.N_ID.size()[0]
     print("Nodes added:", nodes_added, "Edges added:", edges_added)
