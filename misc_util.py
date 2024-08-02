@@ -54,6 +54,13 @@ def rename_files(directory, old, new):
 # directory_path = f'static/graphs/ghost2-1/'
 # rename_files(directory_path, "ghost2-1_", "")
 
+def edge_exists(edge_index, src_id, dst_id):
+    # Convert edge_index to a 2D numpy array for easier processing
+    edge_pairs = edge_index.t().numpy()
+    
+    # Check if the (src_id, dst_id) pair exists in the array of edge pairs
+    return any((edge[0] == src_id and edge[1] == dst_id) for edge in edge_pairs)
+
 def to_tensor(x):
     if isinstance(x, list):
         return torch.tensor(x)
@@ -68,10 +75,10 @@ def pyg_to_dgl(g, train, mode):
     else:
         edge_attrs=['prefix_length', 'overlap_length', 'overlap_similarity', 'E_ID']
         node_attrs=['read_length', 'N_ID']
-    
-    if mode == 'ghost2':
-        edge_attrs.append('is_real_edge')
-        node_attrs.append('is_real_node')
+
+    if mode.startswith('ghost'):
+        edge_attrs.append('edge_hop')
+        node_attrs.append('node_hop')
     
     print("PyG graph:", g)
     u, v = g.edge_index
@@ -88,7 +95,7 @@ def pyg_to_dgl(g, train, mode):
     print("DGL graph:", dgl_g)
     return dgl_g
 
-# mode = 'ghost2-1'
+# mode = 'ghost-1-1'
 
 # ref = {}
 # for i in [1,3,5,9,12,18]:

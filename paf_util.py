@@ -9,7 +9,7 @@ import seaborn as sns
 from tqdm import tqdm
 from multiprocessing import Pool
 
-READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = None, None, None, None, None
+READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ, READS_PARSED = None, None, None, None, None, set()
 CASES = { i:0 for i in range(3) }
 
 # We have to do this because cannot pickle defaultdicts created by lambda
@@ -252,13 +252,13 @@ def parse_row(row):
     '''
     data = None
 
-    if not READ_SEQS or not READ_TO_NODE or not ANNOTATED_FASTA_DATA or not SUCCESSOR_DICT:
+    if not READ_SEQS or not READ_TO_NODE or not ANNOTATED_FASTA_DATA or not SUCCESSOR_DICT or not READS_PARSED:
         raise ValueError("Global objects not set!")
 
-    row = row.strip().split()
+    row_split = row.strip().split()
 
     ## What are these last 3 fields? ##
-    id1, len1, start1, end1, orientation, id2, len2, start2, end2, _, _, _ = row
+    id1, len1, start1, end1, orientation, id2, len2, start2, end2, _, _, _ = row_split
     len1, start1, end1, len2, start2, end2 = int(len1), int(start1), int(end1), int(len2), int(start2), int(end2)
 
     src, dst = None, None
@@ -291,7 +291,8 @@ def parse_row(row):
     
     src_id, dst_id = src[0], dst[0]
     
-    if src_id not in READ_TO_NODE and dst_id not in READ_TO_NODE: return 0, data
+    if str(src_id) not in READS_PARSED and str(dst_id) not in READS_PARSED: 
+        return 3, row
         
     if src[1] == '+' and dst[1] == '+':
         src_seq = READ_SEQS[READ_TO_NODE[src_id][0]] if src_id in READ_TO_NODE else ANNOTATED_FASTA_DATA[src_id][0]
@@ -305,25 +306,7 @@ def parse_row(row):
     else:
         raise Exception("Unrecognised orientation pairing.")
 
-    if src_id in READ_TO_NODE and dst_id in READ_TO_NODE:
-        if src[1] == '+' and dst[1] == '+':
-            src_n_id, dst_n_id = READ_TO_NODE[src_id][0], READ_TO_NODE[dst_id][0]
-            src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][1]
-        elif src[1] == '+' and dst[1] == '-':
-            src_n_id, dst_n_id = READ_TO_NODE[src_id][0], READ_TO_NODE[dst_id][1]
-            src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][0], READ_TO_NODE[dst_rev[0]][1]
-        elif src[1] == '-' and dst[1] == '+':
-            src_n_id, dst_n_id = READ_TO_NODE[src_id][1], READ_TO_NODE[dst_id][0]
-            src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][0]
-
-        if src_n_id == dst_n_id:
-            # print("Self edge found!")
-            return 0, data
-        
-        if dst_n_id in SUCCESSOR_DICT[src_n_id] or dst_rev_n_id in SUCCESSOR_DICT[src_rev_n_id]:
-            # print("Edge already exists!")
-            return 0, data
-        
+    if str(src_id) in READS_PARSED and str(dst_id) in READS_PARSED:
         c_ol_len = end1-start1 # overlapping region length might not always be equal between source and target. but we always take source for ol length
         edit_dist = edlib.align(src_seq, dst_seq)['editDistance']
         c_ol_similarity = 1 - edit_dist / c_ol_len
@@ -350,7 +333,7 @@ def parse_row(row):
 
         return 1, data
 
-    if src_id not in READ_TO_NODE:
+    if str(src_id) not in READS_PARSED:
         data = { 
             '+' : defaultdict(create_list_dd),
             '-' : defaultdict(create_list_dd)
@@ -380,7 +363,7 @@ def parse_row(row):
 
         return 2, data
 
-    if dst_id not in READ_TO_NODE:
+    if str(dst_id) not in READS_PARSED:
         data = { 
             '+' : defaultdict(create_list_dd),
             '-' : defaultdict(create_list_dd)
@@ -413,59 +396,90 @@ def parse_row(row):
 def parse_paf(paf_path, aux, name):
     '''
     ghosts = {
-        '+' : {
-            read_id : {
-                'read_len' : Read length for this read
-                'outs' : [read_id, ...]
-                'ol_len_outs' : [ol_len, ...],
-                'ol_similarity_outs' : [ol_similarity, ...],
-                'prefix_len_outs' : [prefix_len, ...],
-                'ins' : [read_id, ...],
-                'ol_len_ins' : [ol_len, ...],
-                'ol_similarity_ins' : [ol_similarity, ...],
-                'prefix_len_ins' : [prefix_len, ...],
-            }, 
-            read_id_2 : { ... },
-            ...
+        'hop_<n>' {
+            '+' : {
+                read_id : {
+                    'read_len' : Read length for this read
+                    'outs' : [read_id, ...]
+                    'ol_len_outs' : [ol_len, ...],
+                    'ol_similarity_outs' : [ol_similarity, ...],
+                    'prefix_len_outs' : [prefix_len, ...],
+                    'ins' : [read_id, ...],
+                    'ol_len_ins' : [ol_len, ...],
+                    'ol_similarity_ins' : [ol_similarity, ...],
+                    'prefix_len_ins' : [prefix_len, ...],
+                }, 
+                read_id_2 : { ... },
+                ...
+            },
+            '-' : { ... }
         },
-        '-' : { ... }
+        'hop_<n+1>' : { ... }
     }
     '''
     print("Parsing paf file...")
     
-    global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ
+    global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ, READS_PARSED
     READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict'], aux['node_to_read']
+
+    for c_n_id in sorted(NODE_TO_READ.keys()):
+        if c_n_id % 2 != 0: continue # Skip all virtual nodes
+        read_id = NODE_TO_READ[c_n_id]
+        if isinstance(read_id, list):
+            READS_PARSED.add(read_id[0][0]); READS_PARSED.add(read_id[-1][0])
+        else:
+            READS_PARSED.add(read_id)
 
     with open(paf_path) as f:
         rows = f.readlines()
 
     rows = preprocess_rows(rows)
+    curr_rows = deepcopy(rows)
+    cutoff = len(curr_rows) * 0.01
 
-    valid_src, valid_dst, ol_len, ol_similarity, prefix_len = [], [], [], [], []
-    rejected, ghosts = 0, {'+':defaultdict(create_list_dd), '-':defaultdict(create_list_dd)}
-    nrows = len(rows)
+    valid_src, valid_dst, ol_len, ol_similarity, prefix_len, edge_hops = [], [], [], [], [], []
+    ghosts = {}
+    
+    next_rows, hop = [], 1
 
-    with Pool(20) as pool:
-        results = pool.imap_unordered(parse_row, iter(rows), chunksize=60)
-        for code, data in tqdm(results, total=nrows, ncols=120):
-            if code == 0: 
-                CASES[0] += 1
-                continue
-            elif code == 1:
-                CASES[1] += 1
-                ol_similarity.extend(data['ol_similarity'])
-                ol_len.extend(data['ol_len'])
-                prefix_len.extend(data['prefix_len'])
-                valid_src.extend(data['valid_src']) 
-                valid_dst.extend(data['valid_dst'])
-            elif code == 2:
-                CASES[2] += 1
-                for orient, d in data.items():
-                    for id, curr_data in d.items():
-                        for label in ['outs', 'ol_len_outs', 'ol_similarity_outs', 'prefix_len_outs', 'ins', 'ol_len_ins', 'ol_similarity_ins', 'prefix_len_ins']:
-                            ghosts[orient][id][label].extend(curr_data[label])
+    while len(curr_rows) > cutoff:
+        print(f"Starting run for Hop {hop}. nrows: {len(curr_rows)}, cutoff: {cutoff}")
+        curr_ghost_info = {'+':defaultdict(create_list_dd), '-':defaultdict(create_list_dd)}
 
-                        ghosts[orient][id]['read_len'] = curr_data['read_len']
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_row, iter(curr_rows), chunksize=160)
+            for code, data in tqdm(results, total=len(curr_rows), ncols=120):
+                if code == 0: 
+                    CASES[0] += 1
+                    continue
+                elif code == 1:
+                    CASES[1] += 1
+                    ol_similarity.extend(data['ol_similarity'])
+                    ol_len.extend(data['ol_len'])
+                    prefix_len.extend(data['prefix_len'])
+                    valid_src.extend(data['valid_src']) 
+                    valid_dst.extend(data['valid_dst'])
+                    edge_hops.extend([hop]*len(data['valid_src']))
+                elif code == 2:
+                    CASES[2] += 1
+                    for orient, d in data.items():
+                        for id, curr_data in d.items():
+                            for label in ['outs', 'ol_len_outs', 'ol_similarity_outs', 'prefix_len_outs', 'ins', 'ol_len_ins', 'ol_similarity_ins', 'prefix_len_ins']:
+                                curr_ghost_info[orient][id][label].extend(curr_data[label])
+
+                            curr_ghost_info[orient][id]['read_len'] = curr_data['read_len']
+                elif code == 3:
+                    next_rows.append(data)
+
+        assert set(curr_ghost_info['+'].keys()) == set(curr_ghost_info['-'].keys()), "Missing real-virtual node pair."
+        for read_id in curr_ghost_info['+'].keys():
+            READS_PARSED.add(str(read_id))
+
+        print(f"Finished run for Hop {hop}. nrows in hop: {len(curr_rows) - len(next_rows)}")
+        ghosts['hop_'+str(hop)] = curr_ghost_info
+        curr_rows = deepcopy(next_rows)
+        next_rows = []
+        hop += 1
 
     print("CASES:")
     for i, n in CASES.items():
@@ -477,6 +491,7 @@ def parse_paf(paf_path, aux, name):
         'ol_len' : ol_len,
         'ol_similarity' : ol_similarity,
         'prefix_len' : prefix_len,
+        'edge_hops' : edge_hops,
         'ghost_data' : ghosts
     }
 
@@ -485,119 +500,245 @@ def parse_paf(paf_path, aux, name):
 
     return data
 
-def enhance_with_paf(g, aux, get_similarities=False, add_edges=True, add_node_features=True):
-    '''
-    This function adds all edges between two real nodes that were in paf but not in gfa. 
-    For each real node, it also creates the following 6 new node features:
-        1. Number of connected outgoing ghost nodes
-        2. Average OL Len of edges connecting these outgoing ghost nodes
-        3. Average OL Sim of edges connecting these outgoing ghost nodes
-        4. Number of connected incoming ghost nodes
-        5. Average OL Len of edges connecting these incoming ghost nodes
-        6. Average OL Sim of edges connecting these incoming ghost nodes
-    '''
-    data = aux['paf_data']
-    r2n = aux['read_to_node']
-    valid_src, valid_dst, prefix_len, ol_len, ol_similarity = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity']
+# def enhance_with_paf(g, aux, get_similarities=False, add_edges=True, add_node_features=True):
+#     '''
+#     This function adds all edges between two real nodes that were in paf but not in gfa. 
+#     For each real node, it also creates the following 6 new node features:
+#         1. Number of connected outgoing ghost nodes
+#         2. Average OL Len of edges connecting these outgoing ghost nodes
+#         3. Average OL Sim of edges connecting these outgoing ghost nodes
+#         4. Number of connected incoming ghost nodes
+#         5. Average OL Len of edges connecting these incoming ghost nodes
+#         6. Average OL Sim of edges connecting these incoming ghost nodes
+#     '''
+#     data = aux['paf_data']
+#     r2n = aux['read_to_node']
+#     valid_src, valid_dst, prefix_len, ol_len, ol_similarity = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity']
 
-    if add_edges:
-        print("Adding edges between real nodes...")
-        old_n_edges = g.edge_index.size()[1]
-        edge_index, overlap_length, prefix_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist()
-        if get_similarities: overlap_similarity = deepcopy(g['overlap_similarity']).tolist()
+#     if add_edges:
+#         print("Adding edges between real nodes...")
+#         old_n_edges = g.edge_index.size()[1]
+#         edge_index, overlap_length, prefix_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist()
+#         if get_similarities: overlap_similarity = deepcopy(g['overlap_similarity']).tolist()
         
-        for i in tqdm(range(len(valid_src)), ncols=120):
-            # src and dst have format ('id', orientation)
-            # r2n[x] has format (real_id, virt_id)
-            src, dst = valid_src[i], valid_dst[i]
-            if src[1] == '+' and dst[1] == '+':
-                edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
-            elif src[1] == '-' and dst[1] == '-':
-                edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
-            elif src[1] == '+' and dst[1] == '-':
-                edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
-            elif src[1] == '-' and dst[1] == '+':
-                edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
-            else:
-                raise Exception("Unrecognised orientation pairing.")
+#         for i in tqdm(range(len(valid_src)), ncols=120):
+#             # src and dst have format ('id', orientation)
+#             # r2n[x] has format (real_id, virt_id)
+#             src, dst = valid_src[i], valid_dst[i]
+#             if src[1] == '+' and dst[1] == '+':
+#                 edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
+#             elif src[1] == '-' and dst[1] == '-':
+#                 edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
+#             elif src[1] == '+' and dst[1] == '-':
+#                 edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
+#             elif src[1] == '-' and dst[1] == '+':
+#                 edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
+#             else:
+#                 raise Exception("Unrecognised orientation pairing.")
             
-            overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
-            if get_similarities: overlap_similarity.append(ol_similarity[i])
+#             overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
+#             if get_similarities: overlap_similarity.append(ol_similarity[i])
 
-        g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length)
-        g.E_ID = torch.cat((g.E_ID, torch.tensor([i for i in range(old_n_edges, g.edge_index.size()[1])])))
-        if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
+#         g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length)
+#         g.E_ID = torch.cat((g.E_ID, torch.tensor([i for i in range(old_n_edges, g.edge_index.size()[1])])))
+#         if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
 
-    if add_node_features:
-        print("Adding node features...")
-        ghosts = data['ghost_data']
-        real_node_ghost_data = defaultdict(create_list_dd)
+#     if add_node_features:
+#         print("Adding node features...")
+#         ghosts = data['ghost_data']
+#         real_node_ghost_data = defaultdict(create_list_dd)
 
-        for v in ghosts.values(): # '+' and '-'
-            for ghost_info in tqdm(v.values(), ncols=120):
-                for i, c_out in enumerate(ghost_info['outs']):
-                    c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
-                    if c_out[0] not in r2n: continue # this is not a valid node in the gfa
+#         for v in ghosts.values(): # '+' and '-'
+#             for ghost_info in tqdm(v.values(), ncols=120):
+#                 for i, c_out in enumerate(ghost_info['outs']):
+#                     c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
+#                     if c_out[0] not in r2n: continue # this is not a valid node in the gfa
 
-                    if c_out[1] == '+':
-                        n_id = r2n[c_out[0]][0] 
-                    else:
-                        n_id = r2n[c_out[0]][1]
+#                     if c_out[1] == '+':
+#                         n_id = r2n[c_out[0]][0] 
+#                     else:
+#                         n_id = r2n[c_out[0]][1]
 
-                    real_node_ghost_data[n_id]['ol_len_ins'].append(c_ol_len)
-                    real_node_ghost_data[n_id]['ol_similarity_ins'].append(c_ol_sim)
+#                     real_node_ghost_data[n_id]['ol_len_ins'].append(c_ol_len)
+#                     real_node_ghost_data[n_id]['ol_similarity_ins'].append(c_ol_sim)
 
-                for i, c_in in enumerate(ghost_info['ins']):
-                    c_ol_len, c_ol_sim = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i]
-                    if c_in[0] not in r2n: continue # this is not a valid node in the gfa
+#                 for i, c_in in enumerate(ghost_info['ins']):
+#                     c_ol_len, c_ol_sim = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i]
+#                     if c_in[0] not in r2n: continue # this is not a valid node in the gfa
 
-                    if c_in[1] == '+':
-                        n_id = r2n[c_in[0]][0] 
-                    else:
-                        n_id = r2n[c_in[0]][1]
+#                     if c_in[1] == '+':
+#                         n_id = r2n[c_in[0]][0] 
+#                     else:
+#                         n_id = r2n[c_in[0]][1]
 
-                    real_node_ghost_data[n_id]['ol_len_outs'].append(c_ol_len)
-                    real_node_ghost_data[n_id]['ol_similarity_outs'].append(c_ol_sim)
+#                     real_node_ghost_data[n_id]['ol_len_outs'].append(c_ol_len)
+#                     real_node_ghost_data[n_id]['ol_similarity_outs'].append(c_ol_sim)
 
-        n_outs, ol_len_outs, ol_similarity_outs, n_ins, ol_len_ins, ol_similarity_ins = torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID))
-        for ind, n_id in tqdm(enumerate(g.N_ID), ncols=120):
-            c_ghost_data = real_node_ghost_data[int(n_id)]
-            if c_ghost_data['ol_len_outs']:
-                c_n_outs = len(c_ghost_data['ol_len_outs'])
-                n_outs[ind] = c_n_outs
-                ol_len_outs[ind] = sum(c_ghost_data['ol_len_outs'])/c_n_outs 
-                ol_similarity_outs[ind] = sum(c_ghost_data['ol_similarity_outs'])/c_n_outs 
+#         n_outs, ol_len_outs, ol_similarity_outs, n_ins, ol_len_ins, ol_similarity_ins = torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID))
+#         for ind, n_id in tqdm(enumerate(g.N_ID), ncols=120):
+#             c_ghost_data = real_node_ghost_data[int(n_id)]
+#             if c_ghost_data['ol_len_outs']:
+#                 c_n_outs = len(c_ghost_data['ol_len_outs'])
+#                 n_outs[ind] = c_n_outs
+#                 ol_len_outs[ind] = sum(c_ghost_data['ol_len_outs'])/c_n_outs 
+#                 ol_similarity_outs[ind] = sum(c_ghost_data['ol_similarity_outs'])/c_n_outs 
 
-            if c_ghost_data['ol_len_ins']:
-                c_n_ins = len(c_ghost_data['ol_len_ins'])
-                n_ins[ind] = c_n_ins
-                ol_len_ins[ind] = sum(c_ghost_data['ol_len_ins'])/c_n_ins
-                ol_similarity_ins[ind] = sum(c_ghost_data['ol_similarity_ins'])/c_n_ins
+#             if c_ghost_data['ol_len_ins']:
+#                 c_n_ins = len(c_ghost_data['ol_len_ins'])
+#                 n_ins[ind] = c_n_ins
+#                 ol_len_ins[ind] = sum(c_ghost_data['ol_len_ins'])/c_n_ins
+#                 ol_similarity_ins[ind] = sum(c_ghost_data['ol_similarity_ins'])/c_n_ins
 
-        g['ghost_n_outs'] = n_outs
-        g['ghost_ol_len_outs'] = ol_len_outs
-        g['ghost_ol_sim_outs'] = ol_similarity_outs
-        g['ghost_n_ins'] = n_ins
-        g['ghost_ol_len_ins'] = ol_len_ins
-        g['ghost_ol_sim_ins'] = ol_similarity_ins
+#         g['ghost_n_outs'] = n_outs
+#         g['ghost_ol_len_outs'] = ol_len_outs
+#         g['ghost_ol_sim_outs'] = ol_similarity_outs
+#         g['ghost_n_ins'] = n_ins
+#         g['ghost_ol_len_ins'] = ol_len_ins
+#         g['ghost_ol_sim_ins'] = ol_similarity_ins
 
-    return g
+#     return g
 
-def enhance_with_paf_2(g, aux, get_similarities=False, add_features=False):
-    '''
-    This function adds all edges between two real nodes that were in paf but not in gfa. 
-    It also adds all ghost nodes and their respective edges in a 1-hop radius around the real graph.
-    '''
-    data = aux['paf_data']
-    valid_src, valid_dst, prefix_len, ol_len, ol_similarity = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity']
-
-    print("Adding edges between real nodes...")
+def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
     E_ID, N_ID = deepcopy(g.E_ID).tolist(), deepcopy(g.N_ID).tolist()
     c_n_id, c_e_id = len(N_ID), len(E_ID)
     edge_index, overlap_length, prefix_length, read_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist(), deepcopy(g['read_length']).tolist()
     if get_similarities: overlap_similarity = deepcopy(g['overlap_similarity']).tolist()
+    node_hop, edge_hop = [0] * c_n_id, [0] * c_e_id
+
     r2n = aux['read_to_node']
+    data = aux['paf_data']
+
+    print("Adding ghost nodes and edges...")
+    ghosts = data['ghost_data']
+    edges_added = set()
+    fasta_data = aux['annotated_fasta_data']
+
+    for curr_hop in range(1, hop+1):
+        curr_ghost_data = ghosts['hop_'+str(curr_hop)]
+        for read_id, ghost_info in tqdm(curr_ghost_data['+'].items(), ncols=120):
+            added = 0
+            for i, c_out in enumerate(ghost_info['outs']):
+                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
+                if c_out[0] not in r2n: continue # this is not a valid node in the graph
+
+                if c_out[1] == '+':
+                    n_id = r2n[c_out[0]][0] 
+                else:
+                    n_id = r2n[c_out[0]][1]
+
+                if (c_n_id, n_id) in edges_added: continue
+
+                edge_index[0].append(c_n_id)
+                edge_index[1].append(n_id)
+                overlap_length.append(c_ol_len)
+                prefix_length.append(c_prefix_len)
+                if get_similarities: overlap_similarity.append(c_ol_sim)
+                edges_added.add((c_n_id, n_id))
+                E_ID.append(c_e_id)
+                edge_hop.append(curr_hop)
+                c_e_id += 1
+                added += 1
+
+            for i, c_in in enumerate(ghost_info['ins']):
+                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
+                if c_in[0] not in r2n: continue # this is not a valid node in the graph
+
+                if c_in[1] == '+':
+                    n_id = r2n[c_in[0]][0] 
+                else:
+                    n_id = r2n[c_in[0]][1]
+
+                if (n_id, c_n_id) in edges_added: continue
+
+                edge_index[0].append(n_id)
+                edge_index[1].append(c_n_id)
+                overlap_length.append(c_ol_len)
+                prefix_length.append(c_prefix_len)
+                if get_similarities: overlap_similarity.append(c_ol_sim)
+                edges_added.add((n_id, c_n_id))
+                E_ID.append(c_e_id)
+                edge_hop.append(curr_hop)
+                c_e_id += 1
+                added += 1
+
+            if added > 0:
+                aux['node_to_read'][c_n_id] = read_id
+                aux['read_seqs'][c_n_id] = fasta_data[read_id][0]
+                read_length.append(ghost_info['read_len'])
+                N_ID.append(c_n_id)
+                node_hop.append(curr_hop)
+                c_n_id += 1
+            else:
+                print("No edges added for this ghost node. That's weird...")
+                continue
+
+            ghost_info = curr_ghost_data['-'][read_id]
+            if not ghost_info: raise ValueError("Missing reverse comp of ghost node!")
+            added = 0
+
+            for i, c_out in enumerate(ghost_info['outs']):
+                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
+                if c_out[0] not in r2n: continue # this is not a valid node in the graph
+
+                if c_out[1] == '+':
+                    n_id = r2n[c_out[0]][0] 
+                else:
+                    n_id = r2n[c_out[0]][1]
+
+                if (c_n_id, n_id) in edges_added: continue
+
+                edge_index[0].append(c_n_id)
+                edge_index[1].append(n_id)
+                overlap_length.append(c_ol_len)
+                prefix_length.append(c_prefix_len)
+                if get_similarities: overlap_similarity.append(c_ol_sim)
+                edges_added.add((c_n_id, n_id))
+                E_ID.append(c_e_id)
+                edge_hop.append(curr_hop)
+                c_e_id += 1
+                added += 1
+
+            for i, c_in in enumerate(ghost_info['ins']):
+                c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
+                if c_in[0] not in r2n: continue # this is not a valid node in the graph
+
+                if c_in[1] == '+':
+                    n_id = r2n[c_in[0]][0] 
+                else:
+                    n_id = r2n[c_in[0]][1]
+
+                if (n_id, c_n_id) in edges_added: continue
+
+                edge_index[0].append(n_id)
+                edge_index[1].append(c_n_id)
+                overlap_length.append(c_ol_len)
+                prefix_length.append(c_prefix_len)
+                if get_similarities: overlap_similarity.append(c_ol_sim)
+                edges_added.add((n_id, c_n_id))
+                E_ID.append(c_e_id)
+                edge_hop.append(curr_hop)
+                c_e_id += 1
+                added += 1
+
+            if added > 0:
+                aux['node_to_read'][c_n_id] = read_id
+                aux['read_seqs'][c_n_id] = fasta_data[read_id][1]
+                read_length.append(ghost_info['read_len'])
+                N_ID.append(c_n_id)
+                node_hop.append(curr_hop)
+                c_n_id += 1
+            else:
+                print("No edges added for this reverse comp ghost node. That's weird...")
+
+            r2n[read_id] = (c_n_id-2, c_n_id-1)
+
+
+    print("Adding more edges between nodes...")
+    valid_src, valid_dst, prefix_len, ol_len, ol_similarity, edge_hops = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity'], data['edge_hops']
+
     for i in tqdm(range(len(valid_src)), ncols=120):
+        if edge_hops[i] > hop: continue
+
         # src and dst have format ('id', orientation)
         # r2n[x] has format (real_id, virt_id)
         src, dst = valid_src[i], valid_dst[i]
@@ -614,134 +755,20 @@ def enhance_with_paf_2(g, aux, get_similarities=False, add_features=False):
             raise Exception("Unrecognised orientation pairing.")
         
         E_ID.append(c_e_id); c_e_id += 1
+        edge_hop.append(edge_hops[i])
         overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
         if get_similarities: overlap_similarity.append(ol_similarity[i])
 
-    print("Adding ghost nodes and edges...")
-    ghosts = data['ghost_data']
-    edges_added = set()
-    fasta_data = aux['annotated_fasta_data']
-
-    for read_id, ghost_info in tqdm(ghosts['+'].items(), ncols=120):
-        added = 0
-        for i, c_out in enumerate(ghost_info['outs']):
-            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
-            if c_out[0] not in r2n: continue # this is not a valid node in the gfa
-
-            if c_out[1] == '+':
-                n_id = r2n[c_out[0]][0] 
-            else:
-                n_id = r2n[c_out[0]][1]
-
-            if (c_n_id, n_id) in edges_added: continue
-
-            edge_index[0].append(c_n_id)
-            edge_index[1].append(n_id)
-            overlap_length.append(c_ol_len)
-            prefix_length.append(c_prefix_len)
-            if get_similarities: overlap_similarity.append(c_ol_sim)
-            edges_added.add((c_n_id, n_id))
-            E_ID.append(c_e_id)
-            c_e_id += 1
-            added += 1
-
-        for i, c_in in enumerate(ghost_info['ins']):
-            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
-            if c_in[0] not in r2n: continue # this is not a valid node in the gfa
-
-            if c_in[1] == '+':
-                n_id = r2n[c_in[0]][0] 
-            else:
-                n_id = r2n[c_in[0]][1]
-
-            if (n_id, c_n_id) in edges_added: continue
-
-            edge_index[0].append(n_id)
-            edge_index[1].append(c_n_id)
-            overlap_length.append(c_ol_len)
-            prefix_length.append(c_prefix_len)
-            if get_similarities: overlap_similarity.append(c_ol_sim)
-            edges_added.add((n_id, c_n_id))
-            E_ID.append(c_e_id)
-            c_e_id += 1
-            added += 1
-
-        if added > 0:
-            aux['node_to_read'][c_n_id] = read_id
-            aux['read_seqs'][c_n_id] = fasta_data[read_id][0]
-            read_length.append(ghost_info['read_len'])
-            N_ID.append(c_n_id)
-            c_n_id += 1
-        else:
-            print("No edges added for this ghost node. That's weird...")
-            continue
-
-        ghost_info = ghosts['-'][read_id]
-        if not ghost_info: raise ValueError("Missing reverse comp of ghost node!")
-        added = 0
-
-        for i, c_out in enumerate(ghost_info['outs']):
-            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i], ghost_info['prefix_len_outs'][i]
-            if c_out[0] not in r2n: continue # this is not a valid node in the gfa
-
-            if c_out[1] == '+':
-                n_id = r2n[c_out[0]][0] 
-            else:
-                n_id = r2n[c_out[0]][1]
-
-            if (c_n_id, n_id) in edges_added: continue
-
-            edge_index[0].append(c_n_id)
-            edge_index[1].append(n_id)
-            overlap_length.append(c_ol_len)
-            prefix_length.append(c_prefix_len)
-            if get_similarities: overlap_similarity.append(c_ol_sim)
-            edges_added.add((c_n_id, n_id))
-            E_ID.append(c_e_id)
-            c_e_id += 1
-            added += 1
-
-        for i, c_in in enumerate(ghost_info['ins']):
-            c_ol_len, c_ol_sim, c_prefix_len = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i], ghost_info['prefix_len_ins'][i]
-            if c_in[0] not in r2n: continue # this is not a valid node in the gfa
-
-            if c_in[1] == '+':
-                n_id = r2n[c_in[0]][0] 
-            else:
-                n_id = r2n[c_in[0]][1]
-
-            if (n_id, c_n_id) in edges_added: continue
-
-            edge_index[0].append(n_id)
-            edge_index[1].append(c_n_id)
-            overlap_length.append(c_ol_len)
-            prefix_length.append(c_prefix_len)
-            if get_similarities: overlap_similarity.append(c_ol_sim)
-            edges_added.add((n_id, c_n_id))
-            E_ID.append(c_e_id)
-            c_e_id += 1
-            added += 1
-
-        if added > 0:
-            aux['node_to_read'][c_n_id] = read_id
-            aux['read_seqs'][c_n_id] = fasta_data[read_id][1]
-            read_length.append(ghost_info['read_len'])
-            N_ID.append(c_n_id)
-            c_n_id += 1
-        else:
-            print("No edges added for this reverse comp ghost node. That's weird...")
 
     edges_added, nodes_added = len(E_ID)-g.E_ID.size()[0], len(N_ID)-g.N_ID.size()[0]
     print("Nodes added:", nodes_added, "Edges added:", edges_added)
 
-    if add_features: 
-        is_real_edge, is_real_node = [1]*g.E_ID.size()[0], [1]*g.N_ID.size()[0]
-        is_real_edge.extend([0]*edges_added); is_real_node.extend([0]*nodes_added)
-        g.is_real_edge = is_real_edge; g.is_real_node = is_real_node
+    g.node_hop = torch.tensor(node_hop); g.edge_hop = torch.tensor(edge_hop)
 
     g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length); g['read_length'] = torch.tensor(read_length)
     g.E_ID = torch.tensor(E_ID); g.N_ID = torch.tensor(N_ID)
     if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
+    aux['read_to_node'] = r2n
 
     return g, aux
 
