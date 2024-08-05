@@ -36,7 +36,7 @@ if __name__ == "__main__":
             'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/chicken/gfa_graphs/full_0.gfa'}
         }
 
-        for i in ['arab', 'chm13', 'chicken', 'mouse']:
+        for i in ['chicken', 'mouse', 'arab', 'chm13']:
             gfa_path = ref[i]['gfa']
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
@@ -51,9 +51,9 @@ if __name__ == "__main__":
                     aux = pickle.load(f)
             else:
                 g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
-                # torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
-                # with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl", "wb") as p:
-                #     pickle.dump(aux, p)
+                torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
+                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl", "wb") as p:
+                    pickle.dump(aux, p)
             print('\ng before enhance:', g, '\n')
 
 
@@ -98,9 +98,9 @@ if __name__ == "__main__":
             ref[i] = [i for i in range(15)]
         for i in [11,16,17,19,20]:
             ref[i] = [i for i in range(5)]
-
-        for chr in [9]:
-        # for chr in [1,3,5,9,12,18,11,16,17,19,20]:
+            
+        # for chr in [9]:
+        for chr in [1,3,5,9,12,18,11,16,17,19,20]:
             for i in ref[chr]:
                 genome = f'chr{chr}_M_{i}'        
                 gfa_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{genome}_asm.bp.raw.r_utg.gfa"

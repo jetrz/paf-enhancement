@@ -85,6 +85,11 @@ def preprocess_rows(rows):
                     src_n_id, dst_n_id = READ_TO_NODE[src_id][1], READ_TO_NODE[dst_id][0]
                     src_rev_n_id, dst_rev_n_id = READ_TO_NODE[src_rev[0]][1], READ_TO_NODE[dst_rev[0]][0]
 
+                # Overlaps where edge is already in gfa
+                if dst_n_id in SUCCESSOR_DICT[src_n_id] or dst_rev_n_id in SUCCESSOR_DICT[src_rev_n_id]:
+                    duplicates += 1
+                    continue
+
                 src_reads, dst_reads = NODE_TO_READ[src_n_id], NODE_TO_READ[dst_n_id]
                 if isinstance(src_reads, list) and len(src_reads) > 1:
                     if src_id != src_reads[0][0] and src_id != src_reads[-1][0]:
@@ -420,7 +425,7 @@ def parse_paf(paf_path, aux, name):
     print("Parsing paf file...")
     
     global READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ, READS_PARSED
-    READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict'], aux['node_to_read']
+    READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ, READS_PARSED = aux['read_seqs'], aux['read_to_node'], aux['annotated_fasta_data'], aux['successor_dict'], aux['node_to_read'], set()
 
     for c_n_id in sorted(NODE_TO_READ.keys()):
         if c_n_id % 2 != 0: continue # Skip all virtual nodes
@@ -610,11 +615,18 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
 
     print("Adding ghost nodes and edges...")
     ghosts = data['ghost_data']
-    edges_added = set()
     fasta_data = aux['annotated_fasta_data']
 
+    edges_added = set()
+    for i, src in enumerate(edge_index[0]):
+        edges_added.add((int(src), int(edge_index[1][i])))
+    dups_caught = { i:0 for i in range(5) }
+
     for curr_hop in range(1, hop+1):
-        curr_ghost_data = ghosts['hop_'+str(curr_hop)]
+        name = 'hop_' + str(curr_hop)
+        if name not in ghosts: break # No more ghost data
+
+        curr_ghost_data = ghosts[name]
         for read_id, ghost_info in tqdm(curr_ghost_data['+'].items(), ncols=120):
             added = 0
             for i, c_out in enumerate(ghost_info['outs']):
@@ -626,7 +638,9 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
                 else:
                     n_id = r2n[c_out[0]][1]
 
-                if (c_n_id, n_id) in edges_added: continue
+                if (c_n_id, n_id) in edges_added: 
+                    dups_caught[0] += 1
+                    continue
 
                 edge_index[0].append(c_n_id)
                 edge_index[1].append(n_id)
@@ -648,7 +662,9 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
                 else:
                     n_id = r2n[c_in[0]][1]
 
-                if (n_id, c_n_id) in edges_added: continue
+                if (n_id, c_n_id) in edges_added:
+                    dups_caught[1] += 1
+                    continue
 
                 edge_index[0].append(n_id)
                 edge_index[1].append(c_n_id)
@@ -685,7 +701,9 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
                 else:
                     n_id = r2n[c_out[0]][1]
 
-                if (c_n_id, n_id) in edges_added: continue
+                if (c_n_id, n_id) in edges_added:
+                    dups_caught[2] += 1
+                    continue
 
                 edge_index[0].append(c_n_id)
                 edge_index[1].append(n_id)
@@ -707,7 +725,9 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
                 else:
                     n_id = r2n[c_in[0]][1]
 
-                if (n_id, c_n_id) in edges_added: continue
+                if (n_id, c_n_id) in edges_added:
+                    dups_caught[3] += 1
+                    continue
 
                 edge_index[0].append(n_id)
                 edge_index[1].append(c_n_id)
@@ -744,16 +764,27 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
         src, dst = valid_src[i], valid_dst[i]
 
         if src[1] == '+' and dst[1] == '+':
-            edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
+            src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][0]
+            # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
         elif src[1] == '-' and dst[1] == '-':
-            edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
+            src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][1]
+            # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
         elif src[1] == '+' and dst[1] == '-':
-            edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
+            src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][1]
+            # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
         elif src[1] == '-' and dst[1] == '+':
-            edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
+            src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][0]
+            # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
         else:
             raise Exception("Unrecognised orientation pairing.")
+
+        if (src_n_id, dst_n_id) in edges_added:
+            dups_caught[4] += 1
+            continue
         
+        edges_added.add((src_n_id, dst_n_id))
+
+        edge_index[0].append(src_n_id); edge_index[1].append(dst_n_id)
         E_ID.append(c_e_id); c_e_id += 1
         edge_hop.append(edge_hops[i])
         overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
@@ -762,6 +793,9 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
 
     edges_added, nodes_added = len(E_ID)-g.E_ID.size()[0], len(N_ID)-g.N_ID.size()[0]
     print("Nodes added:", nodes_added, "Edges added:", edges_added)
+    print("Duplicates caught:")
+    for case, val in dups_caught.items():
+        print("Case:", case, "Val:", val)
 
     g.node_hop = torch.tensor(node_hop); g.edge_hop = torch.tensor(edge_hop)
 
