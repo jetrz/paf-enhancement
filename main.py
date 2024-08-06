@@ -36,7 +36,7 @@ if __name__ == "__main__":
             'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/chicken/gfa_graphs/full_0.gfa'}
         }
 
-        for i in ['chicken', 'mouse', 'arab', 'chm13']:
+        for i in ['chicken', 'arab', 'chm13', 'mouse']:
             gfa_path = ref[i]['gfa']
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
@@ -150,6 +150,9 @@ if __name__ == "__main__":
 
                 # print("check duplicate edges for g:")
                 # check_duplicate_edges(g)
+
+                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{genome}_n2s.pkl", "wb") as p:
+                    pickle.dump(aux['read_seqs'], p)
 
                 print('\ng after enhance:', g, '\n')
                 torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{genome}.pt')
