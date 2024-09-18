@@ -17,31 +17,46 @@ def find_in_adj_list(neighbours, val, return_src):
                 return i[1], i[3]
             else:
                 return i[2], i[3]
+            
+def longest_walk(adj_list, start_node):
+    # Dictionary to memoize the longest walk from each node
+    memo = {}
 
-def dfs(adj_list, node, visited, n_old_walks, current_walk, max_walk, key_count):
-    visited.add(node)
-    current_walk.append(node)
-    if node < n_old_walks: key_count += 1
+    def dfs(node, visited):
+        # If the longest walk starting from this node is already computed, return it
+        if node in memo:
+            return memo[node]
+        visited.add(node)
 
-    # If we find a new best path, update the max walk and key node count
-    if key_count > max_walk[1]:
-        max_walk[0] = current_walk.copy()
-        max_walk[1] = key_count
+        # Initialize the maximum walk from this node to just the node itself
+        max_walk = [node]
 
-    # Explore neighbors
-    for neighbor in adj_list.get(node, []):
-        neighbor = neighbor[0]
-        if neighbor not in visited:
-            max_walk = dfs(adj_list, neighbor, visited, n_old_walks, current_walk, max_walk, key_count)
-    
-    # Backtrack: unmark the node and remove it from the current walk
-    visited.remove(node)
-    current_walk.pop()
-    if node < n_old_walks: key_count -= 1
+        # Traverse all the neighbors of the current node
+        for neighbor in adj_list.get(node, []):
+            neighbor = neighbor[0]
+            if neighbor in visited: continue
+            # Perform DFS on the neighbor and check the longest walk from that neighbor
+            current_walk = dfs(neighbor, visited)
 
-    return max_walk
+            # If adding this walk leads to a longer path, update the max_walk
+            if len(current_walk) + 1 > len(max_walk):
+                max_walk = [node] + current_walk
+
+        visited.remove(node)
+
+        # Memoize the result for this node
+        memo[node] = max_walk
+        return max_walk
+
+    # Start DFS from the given start node
+    return dfs(start_node, set())
 
 def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path, r2n_path, save_path, ref_path, graph_path):
+    """
+    Postprocesses walks from original pipeline to connect them with ghost data.
+    *IMPORTANT
+    - Only uses information from ghost-1 now. Any two walks are at most connected by a single ghost node. Also, all added ghost nodes must have at least one incoming and one outgoing edge to a walk. This is especially relevant in the section on Generating New Walks.
+    """
     time_start = datetime.now()
 
     print(f"\n===== BEGIN FOR {name} =====\n")
@@ -229,39 +244,28 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
                             break
                 else:
                     raise ValueError("Duplicate edge between two non-walks found!")
-    print("Final number of edges:", sum(len(x) for x in adj_list))
+    print("Final number of edges:", sum(len(x) for x in adj_list.values()))
 
     # Generating new walks using greedy DFS
     print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     new_walks = []
     temp_walk_ids = deepcopy(walk_ids)
     temp_adj_list = deepcopy(adj_list)
-    max_walks = [[[], 0] for _ in range(len(temp_walk_ids))]
-    nodes_in_walk = {} # tracks what nodes are in the best walks for each walk
-    while temp_adj_list: # Loop until all walks are connected
-        print(f"temp_adj_list_len: {len(temp_adj_list)}, temp_walk_ids_len: {len(temp_walk_ids)}")
-
+    while temp_walk_ids: # Loop until all walks are connected
         best_walk, best_walk_count = [], 0
-        for walk_id in tqdm(temp_walk_ids, ncols=120): # the node_id is also the index
-            if max_walks[walk_id][0]:
-                max_walk = max_walks[walk_id]
+        for walk_id in temp_walk_ids: # the node_id is also the index
+            if walk_id not in temp_adj_list or not temp_adj_list[walk_id]:
+                max_walk = [walk_id]
             else:
-                visited, curr_walk, max_walk = set(), [], [[],0]
-                max_walk = dfs(temp_adj_list, walk_id, visited, n_old_walks, curr_walk, max_walk, 0)
-                max_walks[walk_id] = max_walk
-                nodes_in_walk[walk_id] = set(max_walk[0])
+                max_walk = longest_walk(temp_adj_list, walk_id)
+                if max_walk[-1] >= n_old_walks: max_walk.pop() # Remove last item in walk if it is not a key node
 
-            if max_walk[1] > best_walk_count:
-                best_walk_count = max_walk[1]
-                best_walk = max_walk[0]
-        
+            n_key_nodes = (len(max_walk)+1)/2
+            if n_key_nodes > best_walk_count:
+                best_walk_count = n_key_nodes
+                best_walk = max_walk
+
         for w in best_walk:
-            for walk_id in temp_walk_ids:
-                nodes = nodes_in_walk[walk_id]
-                if w in nodes:
-                    max_walks[walk_id] = [[],0]
-                    nodes_in_walk[walk_id] = None
-
             if w in temp_adj_list: del temp_adj_list[w]
             for k, v in deepcopy(temp_adj_list).items():
                 curr_n = [x for x in v if x[0] != w]
@@ -273,10 +277,6 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
             if w < n_old_walks: temp_walk_ids.remove(w)
 
         new_walks.append(best_walk)
-    
-    if temp_walk_ids: # There might still be old walks with no connected edges
-        for w in temp_walk_ids:
-            new_walks.append([w])
     print(f"New walks generated! n new walks: {len(new_walks)}")
 
     print(f"Preprocessing walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
@@ -293,7 +293,7 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         for j, node in enumerate(walk):
             if node >= n_old_walks: # Node is a new ghost node
                 c_nodes.append(node)
-                c_seqs.append(n2s[node])
+                c_seqs.append(str(n2s[node]))
                 _, prefix_len = find_in_adj_list(adj_list[node], walk[j+1], return_src=True)
                 c_prefix_lens.append(prefix_len)
             else: # Node is an original walk
@@ -313,7 +313,8 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
 
                 for k in range(start, end+1):
                     c_nodes.append(old_walk[k])
-                    c_seqs.append(n2s[old_walk[k]])
+                    c_seqs.append(str(n2s[old_walk[k]]))
+
                     if k != end:
                         c_prefix_lens.append(g.edata['prefix_length'][edges_full[(old_walk[k], old_walk[k+1])]])
 
@@ -439,8 +440,8 @@ def analyse(chrs):
         
 if __name__ == "__main__":
     chrs=[1,3,5,9,11,12,16,17,18,19,20]
-    names = ["arab", "chicken"]
-    run_paf_decoding([3], train=True)
+    names = ["chicken", "chm13", "arab"]
+    run_paf_decoding(names, train=False)
     # analyse(chrs)
             
 
