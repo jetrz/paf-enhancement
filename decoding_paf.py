@@ -384,7 +384,7 @@ def run_paf_decoding(names, walk_valid_p=0.25, train=True):
                     n2s_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
                     r2n_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
                     save_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/train/{name}/",
-                    ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/{chr}_MATERNAL_centromere.fasta",
+                    ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/chr{chr}_MATERNAL_centromere.fasta",
                     graph_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
                 )
     else:
@@ -441,8 +441,8 @@ def analyse(chrs):
 if __name__ == "__main__":
     chrs=[1,3,5,9,11,12,16,17,18,19,20]
     names = ["chicken", "chm13", "arab"]
-    run_paf_decoding(names, train=False)
-    # analyse(chrs)
+    run_paf_decoding(chrs, train=True)
+    analyse(chrs)
             
 
 
