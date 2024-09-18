@@ -505,105 +505,7 @@ def parse_paf(paf_path, aux, name):
 
     return data
 
-# def enhance_with_paf(g, aux, get_similarities=False, add_edges=True, add_node_features=True):
-#     '''
-#     This function adds all edges between two real nodes that were in paf but not in gfa. 
-#     For each real node, it also creates the following 6 new node features:
-#         1. Number of connected outgoing ghost nodes
-#         2. Average OL Len of edges connecting these outgoing ghost nodes
-#         3. Average OL Sim of edges connecting these outgoing ghost nodes
-#         4. Number of connected incoming ghost nodes
-#         5. Average OL Len of edges connecting these incoming ghost nodes
-#         6. Average OL Sim of edges connecting these incoming ghost nodes
-#     '''
-#     data = aux['paf_data']
-#     r2n = aux['read_to_node']
-#     valid_src, valid_dst, prefix_len, ol_len, ol_similarity = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity']
-
-#     if add_edges:
-#         print("Adding edges between real nodes...")
-#         old_n_edges = g.edge_index.size()[1]
-#         edge_index, overlap_length, prefix_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist()
-#         if get_similarities: overlap_similarity = deepcopy(g['overlap_similarity']).tolist()
-        
-#         for i in tqdm(range(len(valid_src)), ncols=120):
-#             # src and dst have format ('id', orientation)
-#             # r2n[x] has format (real_id, virt_id)
-#             src, dst = valid_src[i], valid_dst[i]
-#             if src[1] == '+' and dst[1] == '+':
-#                 edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
-#             elif src[1] == '-' and dst[1] == '-':
-#                 edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
-#             elif src[1] == '+' and dst[1] == '-':
-#                 edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
-#             elif src[1] == '-' and dst[1] == '+':
-#                 edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
-#             else:
-#                 raise Exception("Unrecognised orientation pairing.")
-            
-#             overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
-#             if get_similarities: overlap_similarity.append(ol_similarity[i])
-
-#         g['edge_index'] = torch.tensor(edge_index); g['overlap_length'] = torch.tensor(overlap_length); g['prefix_length'] = torch.tensor(prefix_length)
-#         g.E_ID = torch.cat((g.E_ID, torch.tensor([i for i in range(old_n_edges, g.edge_index.size()[1])])))
-#         if get_similarities: g['overlap_similarity'] = torch.tensor(overlap_similarity)
-
-#     if add_node_features:
-#         print("Adding node features...")
-#         ghosts = data['ghost_data']
-#         real_node_ghost_data = defaultdict(create_list_dd)
-
-#         for v in ghosts.values(): # '+' and '-'
-#             for ghost_info in tqdm(v.values(), ncols=120):
-#                 for i, c_out in enumerate(ghost_info['outs']):
-#                     c_ol_len, c_ol_sim = ghost_info['ol_len_outs'][i], ghost_info['ol_similarity_outs'][i]
-#                     if c_out[0] not in r2n: continue # this is not a valid node in the gfa
-
-#                     if c_out[1] == '+':
-#                         n_id = r2n[c_out[0]][0] 
-#                     else:
-#                         n_id = r2n[c_out[0]][1]
-
-#                     real_node_ghost_data[n_id]['ol_len_ins'].append(c_ol_len)
-#                     real_node_ghost_data[n_id]['ol_similarity_ins'].append(c_ol_sim)
-
-#                 for i, c_in in enumerate(ghost_info['ins']):
-#                     c_ol_len, c_ol_sim = ghost_info['ol_len_ins'][i], ghost_info['ol_similarity_ins'][i]
-#                     if c_in[0] not in r2n: continue # this is not a valid node in the gfa
-
-#                     if c_in[1] == '+':
-#                         n_id = r2n[c_in[0]][0] 
-#                     else:
-#                         n_id = r2n[c_in[0]][1]
-
-#                     real_node_ghost_data[n_id]['ol_len_outs'].append(c_ol_len)
-#                     real_node_ghost_data[n_id]['ol_similarity_outs'].append(c_ol_sim)
-
-#         n_outs, ol_len_outs, ol_similarity_outs, n_ins, ol_len_ins, ol_similarity_ins = torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID)), torch.zeros(len(g.N_ID))
-#         for ind, n_id in tqdm(enumerate(g.N_ID), ncols=120):
-#             c_ghost_data = real_node_ghost_data[int(n_id)]
-#             if c_ghost_data['ol_len_outs']:
-#                 c_n_outs = len(c_ghost_data['ol_len_outs'])
-#                 n_outs[ind] = c_n_outs
-#                 ol_len_outs[ind] = sum(c_ghost_data['ol_len_outs'])/c_n_outs 
-#                 ol_similarity_outs[ind] = sum(c_ghost_data['ol_similarity_outs'])/c_n_outs 
-
-#             if c_ghost_data['ol_len_ins']:
-#                 c_n_ins = len(c_ghost_data['ol_len_ins'])
-#                 n_ins[ind] = c_n_ins
-#                 ol_len_ins[ind] = sum(c_ghost_data['ol_len_ins'])/c_n_ins
-#                 ol_similarity_ins[ind] = sum(c_ghost_data['ol_similarity_ins'])/c_n_ins
-
-#         g['ghost_n_outs'] = n_outs
-#         g['ghost_ol_len_outs'] = ol_len_outs
-#         g['ghost_ol_sim_outs'] = ol_similarity_outs
-#         g['ghost_n_ins'] = n_ins
-#         g['ghost_ol_len_ins'] = ol_len_ins
-#         g['ghost_ol_sim_ins'] = ol_similarity_ins
-
-#     return g
-
-def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
+def enhance_with_paf_2(g, aux, get_similarities=False, hop=1, add_inner_edges=True):
     E_ID, N_ID = deepcopy(g.E_ID).tolist(), deepcopy(g.N_ID).tolist()
     c_n_id, c_e_id = len(N_ID), len(E_ID)
     edge_index, overlap_length, prefix_length, read_length = deepcopy(g['edge_index']).tolist(), deepcopy(g['overlap_length']).tolist(), deepcopy(g['prefix_length']).tolist(), deepcopy(g['read_length']).tolist()
@@ -753,42 +655,43 @@ def enhance_with_paf_2(g, aux, get_similarities=False, hop=1):
             r2n[read_id] = (c_n_id-2, c_n_id-1)
 
 
-    print("Adding more edges between nodes...")
-    valid_src, valid_dst, prefix_len, ol_len, ol_similarity, edge_hops = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity'], data['edge_hops']
+    if add_inner_edges:
+        print("Adding more edges between nodes...")
+        valid_src, valid_dst, prefix_len, ol_len, ol_similarity, edge_hops = data['valid_src'], data['valid_dst'], data['prefix_len'], data['ol_len'], data['ol_similarity'], data['edge_hops']
 
-    for i in tqdm(range(len(valid_src)), ncols=120):
-        if edge_hops[i] > hop: continue
+        for i in tqdm(range(len(valid_src)), ncols=120):
+            if edge_hops[i] > max(1, hop): continue
 
-        # src and dst have format ('id', orientation)
-        # r2n[x] has format (real_id, virt_id)
-        src, dst = valid_src[i], valid_dst[i]
+            # src and dst have format ('id', orientation)
+            # r2n[x] has format (real_id, virt_id)
+            src, dst = valid_src[i], valid_dst[i]
 
-        if src[1] == '+' and dst[1] == '+':
-            src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][0]
-            # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
-        elif src[1] == '-' and dst[1] == '-':
-            src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][1]
-            # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
-        elif src[1] == '+' and dst[1] == '-':
-            src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][1]
-            # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
-        elif src[1] == '-' and dst[1] == '+':
-            src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][0]
-            # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
-        else:
-            raise Exception("Unrecognised orientation pairing.")
+            if src[1] == '+' and dst[1] == '+':
+                src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][0]
+                # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][0])
+            elif src[1] == '-' and dst[1] == '-':
+                src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][1]
+                # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][1])
+            elif src[1] == '+' and dst[1] == '-':
+                src_n_id, dst_n_id = r2n[src[0]][0], r2n[dst[0]][1]
+                # edge_index[0].append(r2n[src[0]][0]); edge_index[1].append(r2n[dst[0]][1])
+            elif src[1] == '-' and dst[1] == '+':
+                src_n_id, dst_n_id = r2n[src[0]][1], r2n[dst[0]][0]
+                # edge_index[0].append(r2n[src[0]][1]); edge_index[1].append(r2n[dst[0]][0])
+            else:
+                raise Exception("Unrecognised orientation pairing.")
 
-        if (src_n_id, dst_n_id) in edges_added:
-            dups_caught[4] += 1
-            continue
-        
-        edges_added.add((src_n_id, dst_n_id))
+            if (src_n_id, dst_n_id) in edges_added:
+                dups_caught[4] += 1
+                continue
+            
+            edges_added.add((src_n_id, dst_n_id))
 
-        edge_index[0].append(src_n_id); edge_index[1].append(dst_n_id)
-        E_ID.append(c_e_id); c_e_id += 1
-        edge_hop.append(edge_hops[i])
-        overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
-        if get_similarities: overlap_similarity.append(ol_similarity[i])
+            edge_index[0].append(src_n_id); edge_index[1].append(dst_n_id)
+            E_ID.append(c_e_id); c_e_id += 1
+            edge_hop.append(edge_hops[i])
+            overlap_length.append(ol_len[i]); prefix_length.append(prefix_len[i])
+            if get_similarities: overlap_similarity.append(ol_similarity[i])
 
 
     edges_added, nodes_added = len(E_ID)-g.E_ID.size()[0], len(N_ID)-g.N_ID.size()[0]

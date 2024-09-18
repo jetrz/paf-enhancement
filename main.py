@@ -13,15 +13,17 @@ from misc_util import pyg_to_dgl
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="experiment eval script")
     parser.add_argument("--mode", type=str, default='default', help="ghost-<hop>. See README.md for details.")
-    parser.add_argument("--test", type=bool, default=False, help="generate graphs for test or train")
+    parser.add_argument("--test", type=lambda x: (str(x).lower() == 'true'), default=False, help="generate graphs for test or train")
+    parser.add_argument("--add_inner_edges", type=lambda x: (str(x).lower() == 'true'), default=True, help="add inner edges for ghost mode")
 
-    parser.add_argument("--pickle_gfa", type=bool, default=False, help="whether or not to use pkl file to load gfa data")
-    parser.add_argument("--pickle_fasta", type=bool, default=False, help="whether or not to use pkl file to load fasta data")
-    parser.add_argument("--pickle_paf", type=bool, default=False, help="whether or not to use pkl file to load paf data")
+    parser.add_argument("--pickle_gfa", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load gfa data")
+    parser.add_argument("--pickle_fasta", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load fasta data")
+    parser.add_argument("--pickle_paf", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load paf data")
 
     args = parser.parse_args()
     mode = args.mode
     is_test = args.test
+    add_inner_edges = args.add_inner_edges
 
     pickle_gfa = args.pickle_gfa
     pickle_fasta = args.pickle_fasta
@@ -30,14 +32,14 @@ if __name__ == "__main__":
 
     if is_test:
         ref = {
-            'chm13' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/CHM13/PacBio_HiFi/SRR11292120_3_subreads.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/real_chm13/gfa_graphs/full_0.gfa'},
-            'arab' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/arabidopsis_new/PacBio_HiFi/CRR302668_p0.22.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/arabidopsis/gfa_graphs/full_0.gfa'},
-            'mouse' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/mus_musculus/SRR11606870.fastq', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/mmusculus/gfa_graphs/full_0.gfa'},
-            'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz', 'gfa' : '/mnt/sod2-project/csb4/wgs/martin/real_haploid_datasets/chicken/gfa_graphs/full_0.gfa'}
+            'chm13' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/CHM13/PacBio_HiFi/SRR11292120_3_subreads.fastq.gz'},
+            'arab' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/arabidopsis_new/PacBio_HiFi/CRR302668_p0.22.fastq.gz'},
+            'mouse' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/mus_musculus/SRR11606870.fastq'},
+            'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz'}
         }
 
         for i in ['chicken', 'arab', 'chm13', 'mouse']:
-            gfa_path = ref[i]['gfa']
+            gfa_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.bp.raw.r_utg.gfa"
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
             get_similarities = True
@@ -77,19 +79,23 @@ if __name__ == "__main__":
                 aux['node_attrs'].append('node_hop')
                 aux['edge_attrs'].append('edge_hop')
 
-                g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, hop=hop)
+                g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, hop=hop, add_inner_edges=add_inner_edges)
                 print("\ng after ghost enhance:", g, '\n')
 
             # print("check duplicate edges for g:")
             # check_duplicate_edges(g)
 
-            with open(f"../scratch/{mode}_{i}_n2s.pkl", "wb") as p:
-            # with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{i}_n2s.pkl", "wb") as p:
+            # with open(f"../scratch/{mode}_{i}_n2s.pkl", "wb") as p:
+            with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{i}_n2s.pkl", "wb") as p:
                 pickle.dump(aux['read_seqs'], p)
+            with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{i}_r2n.pkl", "wb") as p:
+                pickle.dump(aux['read_to_node'], p)
 
-            torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{i}.pt')
+            graph_path =  f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/'
+            if not add_inner_edges: graph_path += 'no_inner_edges/'
+            torch.save(g, f'{graph_path}{i}.pt')
             dgl_g = pyg_to_dgl(g, False, mode)
-            dgl.save_graphs(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{i}.dgl', [dgl_g])
+            dgl.save_graphs(f'{graph_path}{i}.dgl', [dgl_g])
 
             print('Done!\n')
     else:
@@ -99,7 +105,6 @@ if __name__ == "__main__":
         for i in [11,16,17,19,20]:
             ref[i] = [i for i in range(5)]
             
-        # for chr in [9]:
         for chr in [1,3,5,9,12,18,11,16,17,19,20]:
             for i in ref[chr]:
                 genome = f'chr{chr}_M_{i}'        
@@ -136,10 +141,8 @@ if __name__ == "__main__":
                     aux['node_attrs'].append('node_hop')
                     aux['edge_attrs'].append('edge_hop')
                         
-                    g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, hop=hop)
+                    g, aux = enhance_with_paf_2(g, aux, get_similarities=get_similarities, hop=hop, add_inner_edges=add_inner_edges)
                     print("\ng after ghost enhance:", g, '\n')
-
-                # check_duplicate_edges(g)
 
                 ##### Adds training labels. #####
                 g, aux = add_train_labels(g, aux)
@@ -153,10 +156,14 @@ if __name__ == "__main__":
 
                 with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{genome}_n2s.pkl", "wb") as p:
                     pickle.dump(aux['read_seqs'], p)
+                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{mode}_{genome}_r2n.pkl", "wb") as p:
+                    pickle.dump(aux['read_to_node'], p)
 
                 print('\ng after enhance:', g, '\n')
-                torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{genome}.pt')
+                graph_path =  f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/'
+                if not add_inner_edges: graph_path += 'no_inner_edges/'
+                torch.save(g, f'{graph_path}{genome}.pt')
                 dgl_g = pyg_to_dgl(g, True, mode)
-                dgl.save_graphs(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/{genome}.dgl', [dgl_g])
+                dgl.save_graphs(f'{graph_path}{genome}.dgl', [dgl_g])
 
                 print('Done!\n')

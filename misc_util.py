@@ -1,6 +1,7 @@
 import torch, pickle, os, dgl
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx, to_dgl
+from tqdm import tqdm
 
 def compare():
     pyg = torch.load('static/graphs/chr18_M_14_ghost.pt')
@@ -51,8 +52,8 @@ def rename_files(directory, old, new):
         print(f"Renamed '{filename}' to '{new_filename}'")
 
 
-# directory_path = f'static/graphs/ghost2-1/'
-# rename_files(directory_path, "ghost2-1_", "")
+# directory_path = '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/ghost-1/no_inner_edges/'
+# rename_files(directory_path, "_no_inner_edges", "")
 
 def edge_exists(edge_index, src_id, dst_id):
     # Convert edge_index to a 2D numpy array for easier processing
@@ -95,30 +96,35 @@ def pyg_to_dgl(g, train, mode):
     print("DGL graph:", dgl_g)
     return dgl_g
 
-# mode = 'ghost-1-1'
+def pyg_to_nx(g):
+    num_nodes, num_edges = g.N_ID.shape[0], g.E_ID.shape[0]
 
-# ref = {}
-# for i in [1,3,5,9,12,18]:
-#     ref[i] = [i for i in range(15)]
-# for i in [11,16,17,19,20]:
-#     ref[i] = [i for i in range(5)]
-
-# for chr in [1,3,5,9,12,18,11,16,17,19,20]:
-#     for i in ref[chr]:
-#         g_name = f'chr{chr}_M_{i}'
-#         print(f"Converting {g_name}...")
-#         path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/'
-#         pyg_g = torch.load(path + g_name + '.pt')
-#         dgl_g = pyg_to_dgl(pyg_g, True, mode)
-#         dgl.save_graphs(path + g_name + '.dgl', [dgl_g])
-
-# for g_name in ['arab', 'chicken']:
-#     print(f"Converting {g_name}...")
-#     path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/{mode}/'
-#     pyg_g = torch.load(path + g_name + '.pt')
-#     dgl_g = pyg_to_dgl(pyg_g, False, mode)
-#     dgl.save_graphs(path + g_name + '.dgl', [dgl_g])
-
-
-
+    node_attrs, edge_attrs = [], []
+    for attr_name in g.keys():
+        attr = getattr(g, attr_name)
         
+        if attr.shape[0] == num_nodes:
+            node_attrs.append(attr_name)
+        elif attr.shape[0] == num_edges:
+            edge_attrs.append(attr_name)
+
+
+    nx_g = to_networkx(g, node_attrs=node_attrs, edge_attrs=edge_attrs)
+    return nx_g
+
+def analyse_walks(name):
+    path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl"
+    with open(path, 'rb') as f:
+        walks = pickle.load(f)
+        print(walks)
+        print(len(walks))
+
+# analyse_walks('chm13')
+
+# for i in tqdm(range(15), ncols=120):
+#     path = '../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/'
+#     g = torch.load(path+f'chr18_M_{i}.pt')
+#     nx_g = pyg_to_nx(g)
+
+#     with open(path+f"nx_chr18_M_{i}.pkl", "wb") as p:
+#         pickle.dump(nx_g, p)
