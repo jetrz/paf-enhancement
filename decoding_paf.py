@@ -440,8 +440,8 @@ def analyse(chrs):
         
 if __name__ == "__main__":
     chrs=[1,3,5,9,11,12,16,17,18,19,20]
-    names = ["chicken", "chm13", "arab"]
-    run_paf_decoding(chrs, train=True)
+    names = ["chicken", "arab", "chm13"]
+    run_paf_decoding(names, walk_valid_p=0.05, train=False)
     analyse(chrs)
             
 
