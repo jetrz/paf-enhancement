@@ -38,7 +38,8 @@ if __name__ == "__main__":
             'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz'}
         }
 
-        for i in ['chicken', 'arab', 'chm13', 'mouse']:
+        for i in ['mouse']:
+        # for i in ['mouse', 'chicken', 'arab', 'chm13']:
             gfa_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.bp.raw.r_utg.gfa"
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
