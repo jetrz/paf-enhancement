@@ -195,15 +195,6 @@ def calculate_similarities(edge_ids, read_seqs, overlap_lengths):
         overlap_similarities[(src, dst)] = 1 - edit_distance / ol_length
     return overlap_similarities
 
-def reverse_graph(g):
-    """
-    Reverses a PyG graph by swapping rows in edge_index.
-    """
-    g_copy = deepcopy(g.detach())
-    rev_e_index = g_copy.edge_index[[1,0], :]
-    g_copy.edge_index = rev_e_index
-    return g_copy
-
 def graph_to_successor_dict(g):
     # Ensure the edge_index is in COO format and directed
     edge_index = g.edge_index

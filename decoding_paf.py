@@ -86,7 +86,7 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
             for n in last_part:
                 n2n_end[n] = n_id
 
-        adj_list[n_id] = set() # adjacency list has the format: new src n_id : [(new dst n_id, old src n_id, old dst n_id), ... ]
+        adj_list[n_id] = set() # adjacency list has the format: new src n_id : [(new dst n_id, old src n_id, old dst n_id, prefix_len, ol_len, ol_sim), ... ]
         walk_ids.append(n_id)
 
         n_id += 1
@@ -96,16 +96,16 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
 
     with open(paf_path, 'rb') as f:
         paf_data = pickle.load(f)
-        valid_src, valid_dst, prefix_lens, ghost_data = paf_data['valid_src'], paf_data['valid_dst'], paf_data['prefix_len'], paf_data['ghost_data']
+        valid_src, valid_dst, prefix_lens, ol_lens, ol_sims, ghost_data = paf_data['valid_src'], paf_data['valid_dst'], paf_data['prefix_len'], paf_data['ol_len'], paf_data['ol_similarity'], paf_data['ghost_data']
 
     print(f"Adding edges between existing nodes... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     added_edges_count = 0
     for i in range(len(valid_src)):
-        src, dst, prefix_len = valid_src[i], valid_dst[i], prefix_lens[i]
+        src, dst, prefix_len, ol_len, ol_sim = valid_src[i], valid_dst[i], prefix_lens[i], ol_lens[i], ol_sims[i]
         if src in n2n_end and dst in n2n_start:
             if n2n_end[src] == n2n_start[dst]: continue # ignore self-edges
             added_edges_count += 1
-            adj_list[n2n_end[src]].add((n2n_start[dst], src, dst, prefix_len))
+            adj_list[n2n_end[src]].add((n2n_start[dst], src, dst, prefix_len, ol_len, ol_sim))
     print("Added edges:", added_edges_count)
 
     with open(r2n_path, 'rb') as f:
@@ -120,21 +120,21 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         for i, out_read_id in enumerate(data['outs']):
             out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
             if out_n_id not in n2n_start: continue
-            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i]))
+            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
 
         for i, in_read_id in enumerate(data['ins']):
             in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
             if in_n_id not in n2n_end: continue
-            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i]))
+            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
 
         # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
         if not curr_out_neighbours or not curr_in_neighbours: continue
 
         adj_list[n_id] = set()
         for n in curr_out_neighbours:
-            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1]))
+            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1], n[2], n[3]))
         for n in curr_in_neighbours:
-            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1]))
+            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1], n[2], n[3]))
 
         seq = fasta_data[read_id][0]
         n2s[n_id] = seq
@@ -147,21 +147,21 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         for i, out_read_id in enumerate(data['outs']):
             out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
             if out_n_id not in n2n_start: continue
-            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i]))
+            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
 
         for i, in_read_id in enumerate(data['ins']):
             in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
             if in_n_id not in n2n_end: continue
-            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i]))
+            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
 
         # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
         if not curr_out_neighbours or not curr_in_neighbours: continue
 
         adj_list[n_id] = set()
         for n in curr_out_neighbours:
-            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1]))
+            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1], n[2], n[3]))
         for n in curr_in_neighbours:
-            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1]))
+            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1], n[2], n[3]))
 
         seq = fasta_data[read_id][1]
         n2s[n_id] = seq
@@ -180,9 +180,9 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
     dup_checker = {}
     for new_src_nid, connected in deepcopy(adj_list).items():
         for i in connected:
-            new_dst_nid, old_src_nid, old_dst_nid, prefix_len = i[0], i[1], i[2], i[3]
+            new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim = i[0], i[1], i[2], i[3], i[4], i[5]
             if (new_src_nid, new_dst_nid) not in dup_checker:
-                dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len)
+                dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
             else:
                 # duplicate is found
                 og = dup_checker[(new_src_nid, new_dst_nid)]
@@ -218,29 +218,29 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
                             score -= 1
 
                     if score < 0: # if score is < 0, new is better, change and remove old one from adj list
-                        dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len)
-                        adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2]))
+                        dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
+                        adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
                     else: # remove new one from adj list
-                        adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len))
+                        adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
                 elif new_src_nid < n_old_walks:
                     walk = walks[new_src_nid]
                     for i in reversed(walk):
                         if i == og[0]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len))
+                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
                             break
                         elif i == old_src_nid: # new one is better, update dupchecker and remove old one from adj list
-                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len)
-                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2]))
+                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
+                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
                             break
                 elif new_dst_nid < n_old_walks:
                     walk = walks[new_dst_nid]
                     for i in walk:
                         if i == og[1]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len))
+                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
                             break
                         elif i == old_dst_nid: # new one is better, update dupchecker and remove old one from adj list
-                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len)
-                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2]))
+                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
+                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
                             break
                 else:
                     raise ValueError("Duplicate edge between two non-walks found!")
@@ -464,9 +464,9 @@ def analyse(chrs):
         
 if __name__ == "__main__":
     # chrs=[1,3,5,9,11,12,16,17,18,19,20]
-    # names = ["chicken", "arab", "chm13"]
-    diploid_chrs = [1,5,10,18,19]
-    run_paf_decoding(diploid_chrs, walk_valid_p=0.05, dataset="diploid")
+    names = ["chicken", "arab", "chm13", "mouse"]
+    # diploid_chrs = [1,5,10,18,19]
+    run_paf_decoding(names, walk_valid_p=0.02, dataset="haploid_test")
     # analyse(chrs)
 
 
