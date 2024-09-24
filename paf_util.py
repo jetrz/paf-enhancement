@@ -10,7 +10,6 @@ from tqdm import tqdm
 from multiprocessing import Pool
 
 READ_SEQS, READ_TO_NODE, ANNOTATED_FASTA_DATA, SUCCESSOR_DICT, NODE_TO_READ, READS_PARSED = None, None, None, None, None, set()
-CASES = { i:0 for i in range(3) }
 
 # We have to do this because cannot pickle defaultdicts created by lambda
 def create_list_dd():
@@ -455,10 +454,8 @@ def parse_paf(paf_path, aux, name):
             results = pool.imap_unordered(parse_row, iter(curr_rows), chunksize=160)
             for code, data in tqdm(results, total=len(curr_rows), ncols=120):
                 if code == 0: 
-                    CASES[0] += 1
                     continue
                 elif code == 1:
-                    CASES[1] += 1
                     ol_similarity.extend(data['ol_similarity'])
                     ol_len.extend(data['ol_len'])
                     prefix_len.extend(data['prefix_len'])
@@ -466,7 +463,6 @@ def parse_paf(paf_path, aux, name):
                     valid_dst.extend(data['valid_dst'])
                     edge_hops.extend([hop]*len(data['valid_src']))
                 elif code == 2:
-                    CASES[2] += 1
                     for orient, d in data.items():
                         for id, curr_data in d.items():
                             for label in ['outs', 'ol_len_outs', 'ol_similarity_outs', 'prefix_len_outs', 'ins', 'ol_len_ins', 'ol_similarity_ins', 'prefix_len_ins']:
@@ -485,10 +481,6 @@ def parse_paf(paf_path, aux, name):
         curr_rows = deepcopy(next_rows)
         next_rows = []
         hop += 1
-
-    print("CASES:")
-    for i, n in CASES.items():
-        print("Case", i, ":", n)
 
     data = {
         'valid_src' : valid_src,

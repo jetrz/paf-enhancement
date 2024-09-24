@@ -364,14 +364,14 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         report = f.read()
         print(report)
 
-def run_paf_decoding(names, walk_valid_p=0.25, train=True):
+def run_paf_decoding(names, walk_valid_p=0.25, dataset="haploid_train"):
     ref = {}
     for i in [1,3,5,9,12,18]:
         ref[i] = [i for i in range(15)]
     for i in [11,16,17,19,20]:
         ref[i] = [i for i in range(5)]
 
-    if train:
+    if dataset=="haploid_train":
         for chr in names:
             for i in ref[chr]:
                 name = f"chr{chr}_M_{i}"
@@ -387,7 +387,7 @@ def run_paf_decoding(names, walk_valid_p=0.25, train=True):
                     ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/chr{chr}_MATERNAL_centromere.fasta",
                     graph_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
                 )
-    else:
+    elif dataset=="haploid_test":
         test_ref = {
             'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
             'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
@@ -407,8 +407,32 @@ def run_paf_decoding(names, walk_valid_p=0.25, train=True):
                 ref_path=test_ref[name],
                 graph_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
             )
+    elif dataset=="diploid":
+        for name in names:
+            name1 = f"hg002_v101_chr{name}_0"
+            for v in ['m', 'p']:
+                name2 = f"chr_{name}_synth_{v}"
+                if v == 'm':
+                    name3 = f"chr{name}_MATERNAL_centromere.fasta"
+                else:
+                    name3 = f"chr{name}_PATERNAL_centromere.fasta"
+                paf_decoding(
+                    name=name2,
+                    walk_valid_p=walk_valid_p,
+                    walks_path=f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name2}/walks.pkl",
+                    fasta_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name1}_fasta_data.pkl",
+                    paf_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name1}_paf_data.pkl',
+                    n2s_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/ghost-1_{name1}_n2s.pkl",
+                    r2n_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/ghost-1_{name1}_r2n.pkl",
+                    save_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
+                    ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/{name3}",
+                    graph_path=f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/dgl_graphs/{name1}.dgl"
+                )
 
 def analyse(chrs):
+    """
+    Only for haploid_train.
+    """
     ref = {}
     for i in [1,3,5,9,12,18]:
         ref[i] = [i for i in range(15)]
@@ -439,10 +463,13 @@ def analyse(chrs):
 
         
 if __name__ == "__main__":
-    chrs=[1,3,5,9,11,12,16,17,18,19,20]
-    names = ["chicken", "arab", "chm13"]
-    run_paf_decoding(names, walk_valid_p=0.05, train=False)
-    analyse(chrs)
+    # chrs=[1,3,5,9,11,12,16,17,18,19,20]
+    # names = ["chicken", "arab", "chm13"]
+    diploid_chrs = [1,5,10,18,19]
+    run_paf_decoding(diploid_chrs, walk_valid_p=0.05, dataset="diploid")
+    # analyse(chrs)
+
+
             
 
 
