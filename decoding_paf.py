@@ -179,8 +179,8 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
     print(f"Removing duplicate edges... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     dup_checker = {}
     for new_src_nid, connected in deepcopy(adj_list).items():
-        for i in connected:
-            new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim = i[0], i[1], i[2], i[3], i[4], i[5]
+        for neigh in connected:
+            new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim = neigh
             if (new_src_nid, new_dst_nid) not in dup_checker:
                 dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
             else:
@@ -221,12 +221,12 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
                         dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
                         adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
                     else: # remove new one from adj list
-                        adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
+                        adj_list[new_src_nid].remove(neigh)
                 elif new_src_nid < n_old_walks:
                     walk = walks[new_src_nid]
                     for i in reversed(walk):
                         if i == og[0]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
+                            adj_list[new_src_nid].remove(neigh)
                             break
                         elif i == old_src_nid: # new one is better, update dupchecker and remove old one from adj list
                             dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
@@ -236,7 +236,7 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
                     walk = walks[new_dst_nid]
                     for i in walk:
                         if i == og[1]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove((new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim))
+                            adj_list[new_src_nid].remove(neigh)
                             break
                         elif i == old_dst_nid: # new one is better, update dupchecker and remove old one from adj list
                             dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
