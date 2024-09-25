@@ -4,6 +4,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 def timedelta_to_str(delta):
     hours, remainder = divmod(delta.seconds, 3600)
@@ -246,6 +247,17 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
                     raise ValueError("Duplicate edge between two non-walks found!")
     print("Final number of edges:", sum(len(x) for x in adj_list.values()))
 
+
+    oll, ols = [], []
+    for neighbours in adj_list.values():
+        for n in neighbours:
+            oll.append(n[4]); ols.append(n[5])
+    plt.plot(oll, marker='o')
+    plt.savefig(f'graphs/{name}_oll')
+    plt.clf()
+    plt.plot(ols, marker='o', color='red')
+    plt.savefig(f'graphs/{name}_ols')  # Show the second plot
+
     # Generating new walks using greedy DFS
     print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     new_walks = []
@@ -279,10 +291,34 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         new_walks.append(best_walk)
     print(f"New walks generated! n new walks: {len(new_walks)}")
 
+    walk_analysis = {}
+    for i, w in enumerate(new_walks):
+        c_oll, c_ols = [], []
+        for n in range(1, len(w)-1):
+            p_node, c_node, n_node = w[n-1], w[n], w[n+1]
+            if c_node < n_old_walks: continue
+
+            if p_node < n_old_walks:
+                c_n = adj_list[p_node]
+                for j in c_n:
+                    if j[0] == c_node:
+                        c_oll.append(j[4])
+                        c_ols.append(j[5])
+                        break
+            if n_node < n_old_walks:
+                c_n = adj_list[c_node]
+                for j in c_n:
+                    if j[0] == n_node:
+                        c_oll.append(j[4])
+                        c_ols.append(j[5])
+                        break     
+        walk_analysis[i] = {'ol_lens':c_oll, 'ol_sims':c_ols}      
+    print("Analysis of ol_len and ol_sim by walk (only considers edges between walks & ghost nodes):\n", walk_analysis)
+
     print(f"Preprocessing walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     g = dgl.load_graphs(graph_path)[0][0]
     # Create a list of all edges
-    edges_full = {}  ## I dont know why this is necessary. but when cut transitives some eges are wrong otherwise.
+    edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise.
     for idx, (src, dst) in enumerate(zip(g.edges()[0], g.edges()[1])):
         src, dst = src.item(), dst.item()
         edges_full[(src, dst)] = idx
