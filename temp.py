@@ -1,10 +1,12 @@
-import dgl, random
+import dgl, pickle, random
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from Bio import SeqIO
 from tqdm import tqdm
+
+from decoding_paf import AdjList, Edge
 
 def analyse(name, hop):
     print(f"\n=== ANALYSING FOR {name} ===\n")
@@ -113,7 +115,7 @@ def analyse_telomere(name):
             
             for j in ['start', 'end']:
                 cutoff = min(30000, len_seq//10)
-                c_seq = seq[:cutoff] if j == 'start' else seq[-cutoff//10:]
+                c_seq = seq[:cutoff] if j == 'start' else seq[-cutoff:]
                 curr_res[j]['len'] = len(c_seq)
                 rep1_count, rep2_count = count_seq(c_seq, rep1), count_seq(c_seq, rep2)
                 if rep1_count > rep2_count:
@@ -168,5 +170,32 @@ def analyse_telomere(name):
     plt.savefig(f'graphs/telomere/{name}.png')
     plt.clf()
 
-for name in ['arab', 'chicken', 'mouse', 'chm13']:
-    analyse_telomere(name)
+# for name in ['arab', 'chicken', 'mouse', 'chm13']:
+#     analyse_telomere(name)
+
+def debug_postprocessing(name):
+    print(f"\n=== COMPARING FOR {name} ===")
+    
+    print("\nComparing walks...")
+    with open(f'{name}_walks.pkl', 'rb') as f1, open(f'{name}_walks_old.pkl', 'rb') as f2:
+        walks, walks_old = pickle.load(f1), pickle.load(f2)
+    walks_set, walks_old_set = {tuple(w) for w in walks}, {tuple(w) for w in walks_old}
+    difference = walks_set.intersection(walks_old_set)
+    walks_set.difference_update(difference); walks_old_set.difference_update(difference)
+    print(f"Different walks:\nNew: {walks_set}\nOld: {walks_old_set}")
+                
+    print("\nComparing Adj Lists..")
+    with open(f'{name}_adj_list.pkl', 'rb') as f1, open(f'{name}_adj_list_old.pkl', 'rb') as f2:
+        adj_list, adj_list_old = pickle.load(f1), pickle.load(f2)
+    adj_list_new = adj_list.adj_list
+    for k, v in adj_list_new.items():
+        new_neighs = set(e.new_dst_nid for e in v)
+        old_neighs = adj_list_old[k]
+        old_neighs = set(n[0] for n in old_neighs)
+        for nn in new_neighs:
+            if nn not in old_neighs:
+                print(f"Different adj list found. Src: {k}, Dst: {nn}")
+
+
+debug_postprocessing("arab")
+debug_postprocessing("chicken")

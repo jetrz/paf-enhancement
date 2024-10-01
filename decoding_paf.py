@@ -1,4 +1,4 @@
-import dgl, os, pickle, subprocess
+import argparse, dgl, math, os, pickle, subprocess
 from Bio import Seq, SeqIO
 from collections import defaultdict
 from copy import deepcopy
@@ -6,319 +6,276 @@ from datetime import datetime
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+# For use in cutoff metric
+OL_LEN_CUTOFF_50, OL_LEN_CUTOFF_75, OL_LEN_CUTOFF_90 = 3875, 6765, 10000 # 50th, 75th, 90th percentile of OL Len for edges with gt_bin=0, averaged over training graphs. For use in cutoff metric
+# For telomere walk generation
+REP1, REP2 = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
+REP_THRESHOLD = 0.1 # % of seq that must contain the above rep regions for it to be classified as telomeric
+SEARCH_REGION_P, MAX_SEARCH_REGION_LEN = 0.1, 30000 # Size of start and end region of walk to search
+
+class Edge():
+    def __init__(self, new_src_nid, new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim):
+        self.new_src_nid = new_src_nid
+        self.new_dst_nid = new_dst_nid
+        self.old_src_nid = old_src_nid
+        self.old_dst_nid = old_dst_nid
+        self.prefix_len = prefix_len
+        self.ol_len = ol_len
+        self.ol_sim = ol_sim
+
+class AdjList():
+    """
+    Maps new_src_nid to edges.
+    """
+
+    def __init__(self):
+        self.adj_list = defaultdict(set)
+
+    def add_edge(self, edge):
+        self.adj_list[edge.new_src_nid].add(edge)
+
+    def remove_edge(self, edge):
+        neighbours = self.adj_list[edge.new_src_nid]
+        if edge not in neighbours:
+            print("WARNING: Removing an edge that does not exist!")
+        self.adj_list[edge.new_src_nid].discard(edge)
+        if not self.adj_list[edge.new_src_nid]: del self.adj_list[edge.new_src_nid]
+
+    def get_edge(self, new_src_nid, new_dst_nid):
+        for e in self.adj_list[new_src_nid]:
+            if e.new_dst_nid == new_dst_nid: 
+                return e
+            
+    def remove_node(self, n_id):
+        if n_id in self.adj_list: del self.adj_list[n_id]
+
+        new_adj_list = defaultdict(set)
+        for new_src_nid, neighbours in self.adj_list.items():
+            new_neighbours = set(e for e in neighbours if e.new_dst_nid != n_id)
+            if new_neighbours: new_adj_list[new_src_nid] = new_neighbours
+        self.adj_list = new_adj_list
+
+    def get_neighbours(self, n_id):
+        return self.adj_list.get(n_id, [])
+
 def timedelta_to_str(delta):
     hours, remainder = divmod(delta.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f'{hours}h {minutes}m {seconds}s'
 
-def find_in_adj_list(neighbours, val, return_src):
-    for i in neighbours:
-        if i[0] == val:
-            if return_src:
-                return i[1], i[3]
-            else:
-                return i[2], i[3]
-            
-def longest_walk(adj_list, start_node):
+def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50):
     # Dictionary to memoize the longest walk from each node
-    memo = {}
+    memo, memo_counts = {}, defaultdict(int)
 
-    def dfs(node, visited):
-        # If the longest walk starting from this node is already computed, return it
-        if node in memo:
-            return memo[node]
+    def dfs(node, visited, walk_telo):
+        if node < n_old_walks:
+            if telo_ref[node]['start']:
+                if walk_telo: print("WARNING: Trying to set walk_telo when it is already set!")
+                walk_telo = telo_ref[node]['start']
+            elif telo_ref[node]['end']:
+                if walk_telo: print("WARNING: Trying to set walk_telo when it is already set!")
+                walk_telo = telo_ref[node]['end']
+
+        # If the longest walk starting from this node is already memoised and telomere is compatible, return it
+        if node in memo: 
+            memo_telo = memo[node][3]
+            if walk_telo is None or memo_telo != walk_telo:
+                return memo[node][0], memo[node][1], memo[node][2]
+
         visited.add(node)
-
-        # Initialize the maximum walk from this node to just the node itself
-        max_walk = [node]
+        max_walk, max_key_nodes, min_penalty = [node], 0, 0
 
         # Traverse all the neighbors of the current node
-        for neighbor in adj_list.get(node, []):
-            neighbor = neighbor[0]
-            if neighbor in visited: continue
-            # Perform DFS on the neighbor and check the longest walk from that neighbor
-            current_walk = dfs(neighbor, visited)
+        for neighbor in adj_list.get_neighbours(node):
+            # Check visited
+            dst = neighbor.new_dst_nid
+            if dst in visited: continue
+            # Check telomere compatibility
+            terminate = False
+            if walk_telo and dst < n_old_walks:
+                curr_telo = get_telo_type(dst)
+                if curr_telo:
+                    if walk_telo != curr_telo:
+                        terminate = True
+                    else:
+                        print("WARNING: ++/-- telomere connection found!")
 
-            # If adding this walk leads to a longer path, update the max_walk
-            if len(current_walk) + 1 > len(max_walk):
+            if terminate:
+                # Terminate search at the next node due to telomere compatibility
+                current_walk, current_key_nodes, current_penalty = [dst], 1, 0
+            else:
+                # Perform DFS on the neighbor and check the longest walk from that neighbor
+                current_walk, current_key_nodes, current_penalty = dfs(dst, visited, walk_telo)
+
+            # Add the penalty for selecting that neighbour, either based on OL Len or OL Sim
+            if penalty == "ol_len":
+                if neighbor.ol_len < OL_LEN_CUTOFF_90: current_penalty += (OL_LEN_CUTOFF_90-neighbor.ol_len)
+            elif penalty == "ol_sim":
+                current_penalty += -1*neighbor.ol_sim
+
+            if current_walk[-1] >= n_old_walks: # last node is a ghost node, should not count their penalty
+                prev_node = node if len(current_walk == 1) else current_walk[-2]
+                curr_edge = adj_list.get_edge(prev_node, current_walk[-1])
+                if penalty == "ol_len":
+                    if curr_edge.ol_len < OL_LEN_CUTOFF_90: current_penalty -= (OL_LEN_CUTOFF_90-curr_edge.ol_len)
+                elif penalty == "ol_sim":
+                    current_penalty -= curr_edge.ol_sim
+
+            # If adding this walk leads to a longer path, or same one with same length but lower penalty, update the max_walk and min_penalty
+            if (current_key_nodes > max_key_nodes) or (current_key_nodes == max_key_nodes and current_penalty < min_penalty):
                 max_walk = [node] + current_walk
+                max_key_nodes = current_key_nodes
+                min_penalty = current_penalty
 
         visited.remove(node)
+        if node < n_old_walks: max_key_nodes += 1
 
-        # Memoize the result for this node
-        memo[node] = max_walk
-        return max_walk
+        # Memoize the result for this node if chances are used up
+        memo_counts[node] += 1
+        if memo_counts[node] >= memo_chances:
+            memo[node] = (max_walk, max_key_nodes, min_penalty, walk_telo)
+
+        return max_walk, max_key_nodes, min_penalty    
 
     # Start DFS from the given start node
-    return dfs(start_node, set())
+    res_walk, res_key_nodes, res_penalty = dfs(start_node, set(), None)
 
-def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path, r2n_path, save_path, ref_path, graph_path):
-    """
-    Postprocesses walks from original pipeline to connect them with ghost data.
-    *IMPORTANT
-    - Only uses information from ghost-1 now. Any two walks are at most connected by a single ghost node. Also, all added ghost nodes must have at least one incoming and one outgoing edge to a walk. This is especially relevant in the section on Generating New Walks.
-    """
-    time_start = datetime.now()
+    # If the last node in a walk is a ghost node, remove it from the walk and negate its penalty.
+    # This case should not occur, but I am just double checking
+    if res_walk[-1] >= n_old_walks:
+        curr_edge = adj_list.get_edge(res_walk[-2], res_walk[-1])
+        if penalty == "ol_len":
+            res_penalty -= curr_edge.ol_len
+        elif penalty == "ol_sim":
+            res_penalty -= curr_edge.ol_sim
+        res_walk.pop()
 
-    print(f"\n===== BEGIN FOR {name} =====\n")
-    print(f"Loading files... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    with open(walks_path, 'rb') as f:
-        walks = pickle.load(f)
-    with open(fasta_path, 'rb') as f:
-        fasta_data = pickle.load(f)
-    with open(n2s_path, 'rb') as f:
-        n2s = pickle.load(f)
+    return res_walk, res_key_nodes, res_penalty
 
-    n_id = 0
-    adj_list = {}
-
-    # Only the first and last walk_valid_p% of nodes in a walk can be connected. Also initialises nodes from walks
-    n2n_start, n2n_end = {}, {} # n2n maps old n_id to new n_id, for the start and ends of the walks respectively
-    walk_ids = [] # all n_ids that belong to walks
-    for walk in walks:
-        if len(walk) == 1:
-            n2n_start[walk[0]] = n_id
-            n2n_end[walk[0]] = n_id
-        else:
-            cutoff = int(max(1, len(walk) // (1/walk_valid_p)))
-            first_part, last_part = walk[:cutoff], walk[-cutoff:]
-            for n in first_part:
-                n2n_start[n] = n_id
-            for n in last_part:
-                n2n_end[n] = n_id
-
-        adj_list[n_id] = set() # adjacency list has the format: new src n_id : [(new dst n_id, old src n_id, old dst n_id, prefix_len, ol_len, ol_sim), ... ]
-        walk_ids.append(n_id)
-
-        n_id += 1
-
-    n_old_walks = len(walk_ids)
-    print(f"Number of original walks: {n_old_walks}")
-
-    with open(paf_path, 'rb') as f:
-        paf_data = pickle.load(f)
-        valid_src, valid_dst, prefix_lens, ol_lens, ol_sims, ghost_data = paf_data['valid_src'], paf_data['valid_dst'], paf_data['prefix_len'], paf_data['ol_len'], paf_data['ol_similarity'], paf_data['ghost_data']
-
-    print(f"Adding edges between existing nodes... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    added_edges_count = 0
-    for i in range(len(valid_src)):
-        src, dst, prefix_len, ol_len, ol_sim = valid_src[i], valid_dst[i], prefix_lens[i], ol_lens[i], ol_sims[i]
-        if src in n2n_end and dst in n2n_start:
-            if n2n_end[src] == n2n_start[dst]: continue # ignore self-edges
-            added_edges_count += 1
-            adj_list[n2n_end[src]].add((n2n_start[dst], src, dst, prefix_len, ol_len, ol_sim))
-    print("Added edges:", added_edges_count)
-
-    with open(r2n_path, 'rb') as f:
-        r2n = pickle.load(f)
-
-    print(f"Adding ghost nodes and edges... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    ghost_data = ghost_data['hop_1'] # WE ONLY DO FOR 1-HOP FOR NOW
-    added_nodes_count = 0
-    for read_id, data in ghost_data['+'].items():
-        curr_out_neighbours, curr_in_neighbours = set(), set()
-
-        for i, out_read_id in enumerate(data['outs']):
-            out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
-            if out_n_id not in n2n_start: continue
-            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
-
-        for i, in_read_id in enumerate(data['ins']):
-            in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
-            if in_n_id not in n2n_end: continue
-            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
-
-        # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
-        if not curr_out_neighbours or not curr_in_neighbours: continue
-
-        adj_list[n_id] = set()
-        for n in curr_out_neighbours:
-            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1], n[2], n[3]))
-        for n in curr_in_neighbours:
-            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1], n[2], n[3]))
-
-        seq = fasta_data[read_id][0]
-        n2s[n_id] = seq
-        n_id += 1
-        added_nodes_count += 1
-
-    for read_id, data in ghost_data['-'].items():
-        curr_out_neighbours, curr_in_neighbours = set(), set()
-        
-        for i, out_read_id in enumerate(data['outs']):
-            out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
-            if out_n_id not in n2n_start: continue
-            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
-
-        for i, in_read_id in enumerate(data['ins']):
-            in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
-            if in_n_id not in n2n_end: continue
-            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
-
-        # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
-        if not curr_out_neighbours or not curr_in_neighbours: continue
-
-        adj_list[n_id] = set()
-        for n in curr_out_neighbours:
-            adj_list[n_id].add((n2n_start[n[0]], None, n[0], n[1], n[2], n[3]))
-        for n in curr_in_neighbours:
-            adj_list[n2n_end[n[0]]].add((n_id, n[0], None, n[1], n[2], n[3]))
-
-        seq = fasta_data[read_id][1]
-        n2s[n_id] = seq
-        n_id += 1
-        added_nodes_count += 1
-    print("Final number of nodes:", n_id)
-
-    if not added_edges_count and not added_nodes_count:
-        print("No suitable nodes and edges found to add to these walks. Returning...")
-        return
-
-    # Remove duplicate edges between nodes. If there are multiple connections between a node and another, at least one of them must be a walk. 
-    # In that case, we choose the best one.
-    # This could probably have been done while adding the edges in. However, to avoid confusion, i'm doing this separately.
-    print(f"Removing duplicate edges... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    dup_checker = {}
-    for new_src_nid, connected in deepcopy(adj_list).items():
-        for neigh in connected:
-            new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim = neigh
-            if (new_src_nid, new_dst_nid) not in dup_checker:
-                dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
-            else:
-                # duplicate is found
-                og = dup_checker[(new_src_nid, new_dst_nid)]
-                if new_src_nid < n_old_walks and new_dst_nid < n_old_walks: # both are walks
-                    walk_src, walk_dst = walks[new_src_nid], walks[new_dst_nid]
-                    start_counting = None
-                    score = 0
-                    for i in reversed(walk_src):
-                        if i == og[0]:
-                            start_counting = '+'
-                            if start_counting: break # both old and new have been found, and score updated
-                        elif i == old_src_nid:
-                            start_counting = '-'
-                            if start_counting: break # both old and new have been found, and score updated
-
-                        if start_counting == '+':
-                            score += 1
-                        elif start_counting == '-':
-                            score -= 1
-
-                    start_counting = None
-                    for i in walk_dst:
-                        if i == og[1]:
-                            start_counting = '+'
-                            if start_counting: break # both old and new have been found, and score updated
-                        elif i == old_dst_nid:
-                            start_counting = '-'
-                            if start_counting: break # both old and new have been found, and score updated
-
-                        if start_counting == '+':
-                            score += 1
-                        elif start_counting == '-':
-                            score -= 1
-
-                    if score < 0: # if score is < 0, new is better, change and remove old one from adj list
-                        dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
-                        adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
-                    else: # remove new one from adj list
-                        adj_list[new_src_nid].remove(neigh)
-                elif new_src_nid < n_old_walks:
-                    walk = walks[new_src_nid]
-                    for i in reversed(walk):
-                        if i == og[0]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove(neigh)
-                            break
-                        elif i == old_src_nid: # new one is better, update dupchecker and remove old one from adj list
-                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
-                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
-                            break
-                elif new_dst_nid < n_old_walks:
-                    walk = walks[new_dst_nid]
-                    for i in walk:
-                        if i == og[1]: # old one is better, remove the new one from adj_list
-                            adj_list[new_src_nid].remove(neigh)
-                            break
-                        elif i == old_dst_nid: # new one is better, update dupchecker and remove old one from adj list
-                            dup_checker[(new_src_nid, new_dst_nid)] = (old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim)
-                            adj_list[new_src_nid].remove((new_dst_nid, og[0], og[1], og[2], og[3], og[4]))
-                            break
-                else:
-                    raise ValueError("Duplicate edge between two non-walks found!")
-    print("Final number of edges:", sum(len(x) for x in adj_list.values()))
-
-
-    oll, ols = [], []
-    for neighbours in adj_list.values():
-        for n in neighbours:
-            oll.append(n[4]); ols.append(n[5])
-    plt.plot(oll, marker='o')
-    plt.savefig(f'graphs/{name}_oll')
-    plt.clf()
-    plt.plot(ols, marker='o', color='red')
-    plt.savefig(f'graphs/{name}_ols')  # Show the second plot
-
+def get_walks(walk_ids, adj_list, telo_ref):
     # Generating new walks using greedy DFS
-    print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     new_walks = []
     temp_walk_ids = deepcopy(walk_ids)
     temp_adj_list = deepcopy(adj_list)
-    while temp_walk_ids: # Loop until all walks are connected
-        best_walk, best_walk_count = [], 0
-        for walk_id in temp_walk_ids: # the node_id is also the index
-            if walk_id not in temp_adj_list or not temp_adj_list[walk_id]:
-                max_walk = [walk_id]
-            else:
-                max_walk = longest_walk(temp_adj_list, walk_id)
-                if max_walk[-1] >= n_old_walks: max_walk.pop() # Remove last item in walk if it is not a key node
+    n_old_walks = len(temp_walk_ids)
 
-            n_key_nodes = (len(max_walk)+1)/2
-            if n_key_nodes > best_walk_count:
-                best_walk_count = n_key_nodes
-                best_walk = max_walk
+    # Remove all old walks that have both start and end telo regions
+    for walk_id, v in telo_ref.items():
+        if v['start'] and v['end']:
+            new_walks.append([walk_id])
+            temp_adj_list.remove_node(walk_id)
+            temp_walk_ids.remove(walk_id)
+
+    # Loop until all walks are connected
+    while temp_walk_ids:
+        best_walk, best_key_nodes, best_penalty = [], 0, 0
+        for walk_id in temp_walk_ids: # the node_id is also the index
+            curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, telo_ref, hyperparams['dfs_penalty'])
+            if curr_key_nodes > best_key_nodes or (curr_key_nodes == best_key_nodes and curr_penalty < best_penalty):
+                best_key_nodes = curr_key_nodes
+                best_walk = curr_walk
+                best_penalty = curr_penalty
 
         for w in best_walk:
-            if w in temp_adj_list: del temp_adj_list[w]
-            for k, v in deepcopy(temp_adj_list).items():
-                curr_n = [x for x in v if x[0] != w]
-                if curr_n:
-                    temp_adj_list[k] = curr_n
-                else:
-                    del temp_adj_list[k]
-
+            temp_adj_list.remove_node(w)
             if w < n_old_walks: temp_walk_ids.remove(w)
 
         new_walks.append(best_walk)
+
     print(f"New walks generated! n new walks: {len(new_walks)}")
+    return new_walks
 
-    walk_analysis = {}
-    for i, w in enumerate(new_walks):
-        c_oll, c_ols = [], []
-        for n in range(1, len(w)-1):
-            p_node, c_node, n_node = w[n-1], w[n], w[n+1]
-            if c_node < n_old_walks: continue
+def get_telo_type(telo_ref, nid):
+    x, y = telo_ref[nid]['start'], telo_ref[nid]['end']
+    if x is not None:
+        return x
+    else:
+        return y
 
-            if p_node < n_old_walks:
-                c_n = adj_list[p_node]
-                for j in c_n:
-                    if j[0] == c_node:
-                        c_oll.append(j[4])
-                        c_ols.append(j[5])
-                        break
-            if n_node < n_old_walks:
-                c_n = adj_list[c_node]
-                for j in c_n:
-                    if j[0] == n_node:
-                        c_oll.append(j[4])
-                        c_ols.append(j[5])
-                        break     
-        walk_analysis[i] = {'ol_lens':c_oll, 'ol_sims':c_ols}      
-    print("Analysis of ol_len and ol_sim by walk (only considers edges between walks & ghost nodes):\n", walk_analysis)
+def get_telo_ref(old_walks, n2s, graph_path):
+    """
+    Generates telomere info for old walks.
 
-    print(f"Preprocessing walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    telo_ref = {
+        walk_id_1 : {
+            'start' : '+', '-', or None,
+            'end' : '+', '-', or None
+        },
+        walk_id_2 : { ... },
+        ...
+    }
+    """
+
+    print("Generating old sequences...")
     g = dgl.load_graphs(graph_path)[0][0]
+    edges = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This is from Martin's script)
+    for idx, (src, dst) in enumerate(zip(g.edges()[0], g.edges()[1])):
+        src, dst = src.item(), dst.item()
+        edges[(src, dst)] = idx
+
+    contigs = []
+    for i, walk in enumerate(old_walks):
+        prefixes = [(src, g.edata['prefix_length'][edges[src,dst]]) for src, dst in zip(walk[:-1], walk[1:])]
+        res = []
+        for (src, prefix) in prefixes:
+            seq = str(n2s[src])
+            res.append(seq[:prefix])
+        contig = Seq.Seq(''.join(res) + str(n2s[walk[-1]]))  # TODO: why is this map here? Maybe I can remove it if I work with strings
+        contig = SeqIO.SeqRecord(contig)
+        contig.id = f'contig_{i+1}'
+        contig.description = f'length={len(contig)}'
+        contigs.append(contig)
+
+    print("Generating telomere info...")
+    def count_rep_region(seq, targ):
+        count, start = 0, 0
+        while True:
+            start = seq.find(targ, start)  # Find next occurrence
+            if start == -1:  # If no more occurrences are found
+                break
+            count += 1  # Increment the count
+            start += len(targ)  # Move past this occurrence
+        return count
+    
+    telo_ref = {}
+    for i, contig in enumerate(contigs):
+        curr_res = {'start':None, 'end':None}
+        seq = str(contig)
+        len_seq = len(seq)
+        
+        for j in ['start', 'end']:
+            cutoff = int(min(MAX_SEARCH_REGION_LEN, len_seq//(1/SEARCH_REGION_P)))
+            c_seq = seq[:cutoff] if j == 'start' else seq[-cutoff:]
+            rep1_count, rep2_count = count_rep_region(c_seq, REP1), count_rep_region(c_seq, REP2)
+            if rep1_count > rep2_count:
+                c_percentage = (rep1_count*6)/len(c_seq)
+                if c_percentage >= REP_THRESHOLD: curr_res[j] = '+'
+            else:
+                c_percentage = (rep2_count*6)/len(c_seq)
+                if c_percentage >= REP_THRESHOLD: curr_res[j] = '-'
+
+        telo_ref[i] = curr_res
+
+    start_count, end_count, both_count = 0, 0, 0
+    for v in telo_ref.values():
+        if v['start'] and v['end']:
+            if v['start'] == v['end']: print("WARNING: Found same telomeric region in start and end of old walk!")
+            both_count += 1
+        if v['start']:
+            start_count += 1
+        if v['end']:
+            end_count += 1
+    print(f"Start telo walk count: {start_count}, End telo walk count: {end_count}, Both telo walk count: {both_count}")
+
+    return telo_ref
+
+def get_contigs(old_walks, new_walks, adj_list, n2s, n2s_ghost, graph_path):
+    g = dgl.load_graphs(graph_path)[0][0]
+    n_old_walks = len(old_walks)
+
+    print("Preprocessing walks...")
     # Create a list of all edges
-    edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise.
+    edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This is from Martin's script)
     for idx, (src, dst) in enumerate(zip(g.edges()[0], g.edges()[1])):
         src, dst = src.item(), dst.item()
         edges_full[(src, dst)] = idx
@@ -329,23 +286,24 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         for j, node in enumerate(walk):
             if node >= n_old_walks: # Node is a new ghost node
                 c_nodes.append(node)
-                c_seqs.append(str(n2s[node]))
-                _, prefix_len = find_in_adj_list(adj_list[node], walk[j+1], return_src=True)
-                c_prefix_lens.append(prefix_len)
+                c_seqs.append(str(n2s_ghost[node]))
+                curr_edge = adj_list.get_edge(node, walk[j+1])
+                c_prefix_lens.append(curr_edge.prefix_len)
             else: # Node is an original walk
-                old_walk = walks[node]
+                old_walk = old_walks[node]
                 if j == 0:
                     start = 0
                 else:
-                    dst, _ = find_in_adj_list(adj_list[walk[j-1]], node, return_src=False)
-                    start = old_walk.index(dst)
+                    curr_edge = adj_list.get_edge(walk[j-1], node)
+                    start = old_walk.index(curr_edge.old_dst_nid)
                 
                 if j+1 == len(walk):
                     end = len(old_walk)-1
                     prefix_len = None
                 else:
-                    src, prefix_len = find_in_adj_list(adj_list[node], walk[j+1], return_src=True)
-                    end = old_walk.index(src)
+                    curr_edge = adj_list.get_edge(node, walk[j+1])
+                    end = old_walk.index(curr_edge.old_src_nid)
+                    prefix_len = curr_edge.prefix_len
 
                 for k in range(start, end+1):
                     c_nodes.append(old_walk[k])
@@ -361,7 +319,7 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         walk_seqs.append(c_seqs)
         walk_prefix_lens.append(c_prefix_lens)
 
-    print(f"Generating contigs... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    print(f"Generating sequences...")
     contigs = []
     for i, seqs in enumerate(walk_seqs):
         prefix_lens = walk_prefix_lens[i]
@@ -376,20 +334,23 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         c_contig.description = f'length={len(c_contig)}'
         contigs.append(c_contig)
 
-    print(f"Saving assembly... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    return contigs
+
+def asm_metrics(contigs, save_path, ref_path):
+    print(f"Saving assembly...")
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     asm_path = save_path+"0_assembly.fasta"
     SeqIO.write(contigs, asm_path, 'fasta')
 
-    print(f"Running minigraph... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    print(f"Running minigraph...")
     paf = save_path+"asm.paf"
     cmd = f'/home/stumanuel/GitHub/minigraph/minigraph -t32 -xasm -g10k -r10k --show-unmap=yes {ref_path} {asm_path}'.split(' ')
     with open(paf, 'w') as f:
         p = subprocess.Popen(cmd, stdout=f)
     p.wait()
 
-    print(f"Running paftools... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    print(f"Running paftools...")
     paftools_path = "/home/stumanuel/GitHub/minimap2/misc/paftools.js"
     cmd = f'k8 {paftools_path} asmstat {ref_path+".fai"} {paf}'.split()
     report = save_path+"minigraph.txt"
@@ -400,7 +361,220 @@ def paf_decoding(name, walk_valid_p, walks_path, fasta_path, paf_path, n2s_path,
         report = f.read()
         print(report)
 
-def run_paf_decoding(names, walk_valid_p=0.25, dataset="haploid_train"):
+def paf_postprocessing(name, hyperparams, paths):
+    """
+    Postprocesses walks from original pipeline to connect them with ghost data.
+    *IMPORTANT
+    - Only uses information from ghost-1 now. Any two walks are at most connected by a single ghost node. Also, all added ghost nodes must have at least one incoming and one outgoing edge to a walk. This is especially relevant in the section on Generating New Walks.
+    """
+    time_start = datetime.now()
+
+    print(f"\n===== BEGIN FOR {name} =====\n")
+    print(f"Loading files... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    with open(paths['walks_path'], 'rb') as f:
+        walks = pickle.load(f)
+    with open(paths['fasta_path'], 'rb') as f:
+        fasta_data = pickle.load(f)
+    with open(paths['n2s_path'], 'rb') as f:
+        n2s = pickle.load(f)
+
+    n_id = 0
+    adj_list = AdjList()
+
+    # Only the first and last walk_valid_p% of nodes in a walk can be connected. Also initialises nodes from walks
+    n2n_start, n2n_end = {}, {} # n2n maps old n_id to new n_id, for the start and ends of the walks respectively
+    walk_ids = [] # all n_ids that belong to walks
+    for walk in walks:
+        if len(walk) == 1:
+            n2n_start[walk[0]] = n_id
+            n2n_end[walk[0]] = n_id
+        else:
+            cutoff = int(max(1, len(walk) // (1/hyperparams['walk_valid_p'])))
+            first_part, last_part = walk[:cutoff], walk[-cutoff:]
+            for n in first_part:
+                n2n_start[n] = n_id
+            for n in last_part:
+                n2n_end[n] = n_id
+
+        walk_ids.append(n_id)
+        n_id += 1
+
+    n_old_walks = len(walk_ids)
+    print(f"Number of original walks: {n_old_walks}")
+
+    with open(paths['paf_path'], 'rb') as f:
+        paf_data = pickle.load(f)
+        valid_src, valid_dst, prefix_lens, ol_lens, ol_sims, ghost_data = paf_data['valid_src'], paf_data['valid_dst'], paf_data['prefix_len'], paf_data['ol_len'], paf_data['ol_similarity'], paf_data['ghost_data']
+
+    print(f"Adding edges between existing nodes... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    ol_len_cutoff = 0
+    if hyperparams['ol_len_cutoff'] == 50:
+        ol_len_cutoff = OL_LEN_CUTOFF_50
+    elif hyperparams['ol_len_cutoff'] == 75:
+        ol_len_cutoff = OL_LEN_CUTOFF_75
+    elif hyperparams['ol_len_cutoff'] == 90:
+        ol_len_cutoff = OL_LEN_CUTOFF_90
+
+    added_edges_count = 0
+    for i in range(len(valid_src)):
+        src, dst, prefix_len, ol_len, ol_sim = valid_src[i], valid_dst[i], prefix_lens[i], ol_lens[i], ol_sims[i]
+        if ol_len < ol_len_cutoff: continue
+        if src in n2n_end and dst in n2n_start:
+            if n2n_end[src] == n2n_start[dst]: continue # ignore self-edges
+            added_edges_count += 1
+            adj_list.add_edge(Edge(
+                new_src_nid=n2n_end[src], 
+                new_dst_nid=n2n_start[dst], 
+                old_src_nid=src, 
+                old_dst_nid=dst, 
+                prefix_len=prefix_len, 
+                ol_len=ol_len, 
+                ol_sim=ol_sim
+            ))
+    print("Added edges:", added_edges_count)
+
+    with open(paths['r2n_path'], 'rb') as f:
+        r2n = pickle.load(f)
+
+    print(f"Adding ghost nodes and edges... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    n2s_ghost = {}
+    ghost_data = ghost_data['hop_1'] # WE ONLY DO FOR 1-HOP FOR NOW
+    added_nodes_count = 0
+    for orient in ['+', '-']:
+        for read_id, data in ghost_data[orient].items():
+            curr_out_neighbours, curr_in_neighbours = set(), set()
+
+            for i, out_read_id in enumerate(data['outs']):
+                out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
+                if out_n_id not in n2n_start: continue
+                if data['ol_len_outs'][i] < ol_len_cutoff: continue
+                curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
+
+            for i, in_read_id in enumerate(data['ins']):
+                in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
+                if in_n_id not in n2n_end: continue
+                if data['ol_len_ins'][i] < ol_len_cutoff: continue
+                curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
+
+            # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
+            if not curr_out_neighbours or not curr_in_neighbours: continue
+
+            for n in curr_out_neighbours:
+                adj_list.add_edge(Edge(
+                    new_src_nid=n_id,
+                    new_dst_nid=n2n_start[n[0]],
+                    old_src_nid=None,
+                    old_dst_nid=n[0],
+                    prefix_len=n[1],
+                    ol_len=n[2],
+                    ol_sim=n[3]
+                ))
+            for n in curr_in_neighbours:
+                adj_list.add_edge(Edge(
+                    new_src_nid=n2n_end[n[0]],
+                    new_dst_nid=n_id,
+                    old_src_nid=n[0],
+                    old_dst_nid=None,
+                    prefix_len=n[1],
+                    ol_len=n[2],
+                    ol_sim=n[3]
+                ))
+
+            seq = fasta_data[read_id][0] if orient == '+' else fasta_data[read_id][1]
+            n2s_ghost[n_id] = seq
+            n_id += 1
+            added_nodes_count += 1
+    print("Final number of nodes:", n_id)
+
+    if not added_edges_count and not added_nodes_count:
+        print("No suitable nodes and edges found to add to these walks. Returning...")
+        return
+
+    # Remove duplicate edges between nodes. If there are multiple connections between a walk and another node/walk, we choose the best one.
+    # This could probably have been done while adding the edges in. However, to avoid confusion, i'm doing this separately.
+    print(f"Removing duplicate edges... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    for new_src_nid, connected in adj_list.adj_list.items():
+        dup_checker = {}
+        for neigh in connected:
+            new_dst_nid = neigh.new_dst_nid
+            if new_dst_nid not in dup_checker:
+                dup_checker[new_dst_nid] = neigh
+            else:
+                # duplicate is found
+                og = dup_checker[new_dst_nid]
+                if new_src_nid < n_old_walks and new_dst_nid < n_old_walks: # both are walks
+                    walk_src, walk_dst = walks[new_src_nid], walks[new_dst_nid]
+                    start_counting = None
+                    score = 0
+                    for i in reversed(walk_src):
+                        if i == og.old_src_nid:
+                            if start_counting: break # both old and new have been found, and score updated
+                            start_counting = '+'
+                        elif i == neigh.old_src_nid:
+                            if start_counting: break # both old and new have been found, and score updated
+                            start_counting = '-'
+
+                        if start_counting == '+':
+                            score += 1
+                        elif start_counting == '-':
+                            score -= 1
+
+                    start_counting = None
+                    for i in walk_dst:
+                        if i == og.old_dst_nid:
+                            if start_counting: break # both old and new have been found, and score updated
+                            start_counting = '+'
+                        elif i == neigh.old_dst_nid:
+                            if start_counting: break # both old and new have been found, and score updated
+                            start_counting = '-'
+
+                        if start_counting == '+':
+                            score += 1
+                        elif start_counting == '-':
+                            score -= 1
+
+                    if score < 0: # if score is < 0, new is better
+                        dup_checker[new_dst_nid] = neigh
+                elif new_src_nid < n_old_walks:
+                    walk = walks[new_src_nid]
+                    for i in reversed(walk):
+                        if i == neigh.old_src_nid: # new one is better, update dupchecker and remove old one from adj list
+                            dup_checker[new_dst_nid] = neigh
+                            break
+                elif new_dst_nid < n_old_walks:
+                    walk = walks[new_dst_nid]
+                    for i in walk:
+                        if i == neigh.old_dst_nid: # new one is better, update dupchecker and remove old one from adj list
+                            dup_checker[new_dst_nid] = neigh
+                            break
+                else:
+                    raise ValueError("Duplicate edge between two non-walks found!")
+                
+        adj_list.adj_list[new_src_nid] = set(n for n in dup_checker.values())
+    print("Final number of edges:", sum(len(x) for x in adj_list.adj_list.values()))
+
+    ### FOR DEBUGGING ###
+    # with open(f'{name}_adj_list.pkl', 'wb') as f:
+    #     pickle.dump(adj_list, f)
+
+    print(f"Generating telomere reference info... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    telo_ref = get_telo_ref(walks, n2s, paths['graph_path'])
+
+    print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    new_walks = get_walks(walk_ids, adj_list, telo_ref)
+
+    ### FOR DEBUGGING ###
+    # with open(f'{name}_walks.pkl', 'wb') as f:
+    #     pickle.dump(new_walks, f)
+
+    print(f"Generating contigs... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    contigs = get_contigs(walks, new_walks, adj_list, n2s, n2s_ghost, paths['graph_path'])
+
+    print(f"Calculating assembly metrics... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    asm_metrics(contigs, paths['save_path'], paths['ref_path'])
+    return
+
+def run_paf_postprocessing(names, dataset, hyperparams):
     ref = {}
     for i in [1,3,5,9,12,18]:
         ref[i] = [i for i in range(15)]
@@ -411,18 +585,17 @@ def run_paf_decoding(names, walk_valid_p=0.25, dataset="haploid_train"):
         for chr in names:
             for i in ref[chr]:
                 name = f"chr{chr}_M_{i}"
-                paf_decoding(
-                    name=name, 
-                    walk_valid_p=walk_valid_p,
-                    walks_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/train/{name}/walks.pkl",
-                    fasta_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl",
-                    paf_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_paf_data.pkl',
-                    n2s_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
-                    r2n_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
-                    save_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/train/{name}/",
-                    ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/chr{chr}_MATERNAL_centromere.fasta",
-                    graph_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
-                )
+                paths = {
+                    'walks_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/train/{name}/walks.pkl",
+                    'fasta_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl",
+                    'paf_path':f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_paf_data.pkl',
+                    'n2s_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
+                    'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
+                    'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/train/{name}/",
+                    'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/chr{chr}_MATERNAL_centromere.fasta",
+                    'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
+                }
+                paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
     elif dataset=="haploid_test":
         test_ref = {
             'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
@@ -431,39 +604,34 @@ def run_paf_decoding(names, walk_valid_p=0.25, dataset="haploid_train"):
             'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna'
         }
         for name in names:
-            paf_decoding(
-                name=name,
-                walk_valid_p=walk_valid_p,
-                walks_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl",
-                fasta_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl",
-                paf_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_paf_data.pkl',
-                n2s_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
-                r2n_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
-                save_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name}/",
-                ref_path=test_ref[name],
-                graph_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
-            )
+            paths={
+                'walks_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl",
+                'fasta_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl",
+                'paf_path':f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_paf_data.pkl',
+                'n2s_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
+                'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
+                'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name}/",
+                'ref_path':test_ref[name],
+                'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"                
+            }
+            paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
     elif dataset=="diploid":
         for name in names:
             name1 = f"hg002_v101_chr{name}_0"
             for v in ['m', 'p']:
                 name2 = f"chr_{name}_synth_{v}"
-                if v == 'm':
-                    name3 = f"chr{name}_MATERNAL_centromere.fasta"
-                else:
-                    name3 = f"chr{name}_PATERNAL_centromere.fasta"
-                paf_decoding(
-                    name=name2,
-                    walk_valid_p=walk_valid_p,
-                    walks_path=f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name2}/walks.pkl",
-                    fasta_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name1}_fasta_data.pkl",
-                    paf_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name1}_paf_data.pkl',
-                    n2s_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/ghost-1_{name1}_n2s.pkl",
-                    r2n_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/ghost-1_{name1}_r2n.pkl",
-                    save_path=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
-                    ref_path=f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/{name3}",
-                    graph_path=f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/dgl_graphs/{name1}.dgl"
-                )
+                name3 = f"chr{name}_MATERNAL_centromere.fasta" if v == 'm' else f"chr{name}_PATERNAL_centromere.fasta"
+                paths = {
+                    'walks_path':f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name2}/walks.pkl",
+                    'fasta_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/full_reads/{name1}.pkl",
+                    'paf_path':f'/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/paf/{name1}.pkl',
+                    'n2s_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/reduced_reads/{name1}.pkl", 
+                    'r2n_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/read_to_node/{name1}.pkl",
+                    'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
+                    'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/{name3}",
+                    'graph_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/dgl_graphs/{name1}.dgl"                    
+                }
+                paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
 
 def analyse(chrs):
     """
@@ -499,14 +667,34 @@ def analyse(chrs):
 
         
 if __name__ == "__main__":
-    # chrs=[1,3,5,9,11,12,16,17,18,19,20]
-    names = ["chicken", "arab", "chm13", "mouse"]
-    # diploid_chrs = [1,5,10,18,19]
-    run_paf_decoding(names, walk_valid_p=0.02, dataset="haploid_test")
-    # analyse(chrs)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, or diploid")
+    parser.add_argument("--walk_valid_p", type=float, default=0.02)
+    parser.add_argument("--ol_len_cutoff", type=int, default=0, help="50, 75, or 90")
+    parser.add_argument("--dfs_penalty", type=str, default=None, help="ol_len or ol_sim, leave blank for no penalty")
+    args = parser.parse_args()
+    dataset = args.dataset
+    hyperparams = {
+        'walk_valid_p' : args.walk_valid_p,
+        'ol_len_cutoff' : args.ol_len_cutoff,
+        'dfs_penalty' : args.dfs_penalty
+    }
+
+    if dataset == "haploid_train":
+        names = [1,3,5,9,11,12,16,17,18,19,20]
+    elif dataset == "haploid_test":
+        names = ["arab", "chicken", "mouse", "chm13"]
+    elif dataset == "diploid":
+        names = [10,1,5,19,18]
+
+    # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
 
-            
 
-
-    
+    for names in [["chicken"], ["arab"]]:
+        for walk_valid_p in [0.02, 0.05]:
+            hyperparams["walk_valid_p"] = walk_valid_p
+            for dfs_penalty in [None, "ol_len", "ol_sim"]:
+                print(f"running for {names[0]}, walk_valid_p={walk_valid_p}, dfs_penalty={dfs_penalty}")
+                hyperparams["dfs_penalty"] = dfs_penalty
+                run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
