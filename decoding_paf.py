@@ -8,13 +8,8 @@ import matplotlib.pyplot as plt
 
 # For telomere operations
 REP1, REP2 = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
-CHOP_WALK_BUFFER, CHOP_WALK_MIN_COUNT_DEFAULT = 10, 100 # allowed buffer between reps, default number of times the target sequence must repeat for it to qualify as telomeric region
 # For use in cutoff metric
 OL_LEN_CUTOFF_50, OL_LEN_CUTOFF_75, OL_LEN_CUTOFF_90 = 3875, 6765, 10000 # 50th, 75th, 90th percentile of OL Len for edges with gt_bin=0, averaged over training graphs. For use in cutoff metric
-
-# REP_THRESHOLD = 0.05 # % of seq that must contain the above rep regions for it to be classified as telomeric
-# REP_THRESHOLD = 0.005
-# SEARCH_REGION_P, MAX_SEARCH_REGION_LEN = 0.1, 30000 # Size of start and end region of walk to search
 
 class Edge():
     def __init__(self, new_src_nid, new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim):
@@ -77,14 +72,24 @@ def timedelta_to_str(delta):
     minutes, seconds = divmod(remainder, 60)
     return f'{hours}h {minutes}m {seconds}s'
 
-def chop_walks(old_walks, n2s, chop_walk_min_count):
+def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
+    # Create a list of all edges
+    edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This is from Martin's script)
+    for idx, (src, dst) in enumerate(zip(graph.edges()[0], graph.edges()[1])):
+        src, dst = src.item(), dst.item()
+        edges_full[(src, dst)] = idx
+
     def chop_indiv_walk(walk):
         # This function could probably be optimised by only using 2 or even 1 pass through the nodes. But to minimise bugs i'm doing it step by step
         seq, curr_pos, pos_to_node = "", 0, {}
-        for node in walk:
+        for idx, node in enumerate(walk):
             # Preprocess the sequence
             c_seq = str(n2s[node])
-            seq += c_seq            
+            if idx != len(walk)-1:
+                c_prefix = graph.edata['prefix_length'][edges_full[node,walk[idx+1]]]
+                c_seq = c_seq[:c_prefix]
+
+            seq += c_seq
             c_len_seq = len(c_seq)
             for i in range(curr_pos, curr_pos+c_len_seq):
                 pos_to_node[i] = node
@@ -107,7 +112,7 @@ def chop_walks(old_walks, n2s, chop_walk_min_count):
                 while end_index < len(seq):
                     next_index = seq.find(curr_telo, end_index)
                     if next_index == -1: break
-                    if next_index - end_index <= CHOP_WALK_BUFFER:
+                    if next_index - end_index <= chop_walk_buffer:
                         curr_count += 1
                         end_index = next_index + 6
                     else:
@@ -203,7 +208,11 @@ def chop_walks(old_walks, n2s, chop_walk_min_count):
             new_walks.append(w)
             telo_ref[len(new_walks)-1] = c_telo_ref[i]
 
-    print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}")
+    rep1_count, rep2_count = 0, 0
+    for v in telo_ref.values():
+        if v['start'] == '+' or v['end'] == '+': rep1_count += 1
+        if v['start'] == '-' or v['end'] == '-': rep2_count += 1
+    print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}, n +ve telomeric regions: {rep1_count}, n -ve telomeric regions: {rep2_count}")
     return new_walks, telo_ref
 
 def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50):
@@ -235,7 +244,7 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
             if dst in visited: continue
             # Check telomere compatibility
             terminate = False
-            if walk_telo and dst < n_old_walks:
+            if dst < n_old_walks:
                 curr_telo = get_telo_type(telo_ref, dst)
                 if curr_telo:
                     if walk_telo != curr_telo:
@@ -300,6 +309,18 @@ def get_walks(walk_ids, adj_list, telo_ref):
     new_walks = []
     temp_walk_ids, temp_adj_list = deepcopy(walk_ids), deepcopy(adj_list)
     n_old_walks = len(temp_walk_ids)
+    rev_adj_list = AdjList()
+    for edges in temp_adj_list.adj_list.values():
+        for e in edges:
+            rev_adj_list.add_edge(Edge(
+                new_src_nid=e.new_dst_nid,
+                new_dst_nid=e.new_src_nid,
+                old_src_nid=e.old_dst_nid,
+                old_dst_nid=e.old_src_nid,
+                prefix_len=e.prefix_len,
+                ol_len=e.ol_len,
+                ol_sim=e.ol_sim
+            ))
 
     # Remove all old walks that have both start and end telo regions
     for walk_id, v in telo_ref.items():
@@ -313,6 +334,10 @@ def get_walks(walk_ids, adj_list, telo_ref):
         best_walk, best_key_nodes, best_penalty = [], 0, 0
         for walk_id in temp_walk_ids: # the node_id is also the index
             curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            curr_walk_rev.reverse(); curr_walk_rev = curr_walk_rev[:-1]; curr_walk_rev.extend(curr_walk); curr_walk = curr_walk_rev
+            curr_key_nodes += (curr_key_nodes_rev-1)
+            curr_penalty += curr_penalty_rev
             if curr_key_nodes > best_key_nodes or (curr_key_nodes == best_key_nodes and curr_penalty < best_penalty):
                 best_key_nodes = curr_key_nodes
                 best_walk = curr_walk
@@ -320,6 +345,7 @@ def get_walks(walk_ids, adj_list, telo_ref):
 
         for w in best_walk:
             temp_adj_list.remove_node(w)
+            rev_adj_list.remove_node(w)
             if w < n_old_walks: temp_walk_ids.remove(w)
 
         new_walks.append(best_walk)
@@ -332,6 +358,18 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
     new_walks = []
     temp_walk_ids, temp_adj_list = deepcopy(walk_ids), deepcopy(adj_list)
     n_old_walks = len(temp_walk_ids)
+    rev_adj_list = AdjList()
+    for edges in temp_adj_list.adj_list.values():
+        for e in edges:
+            rev_adj_list.add_edge(Edge(
+                new_src_nid=e.new_dst_nid,
+                new_dst_nid=e.new_src_nid,
+                old_src_nid=e.old_dst_nid,
+                old_dst_nid=e.old_src_nid,
+                prefix_len=e.prefix_len,
+                ol_len=e.ol_len,
+                ol_sim=e.ol_sim
+            ))
 
     # Remove all old walks that have both start and end telo regions
     for walk_id, v in telo_ref.items():
@@ -343,7 +381,7 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
     # Split walks into those with telomeric regions and those without
     telo_walk_ids, non_telo_walk_ids = [], []
     for i in temp_walk_ids:
-        if telo_ref[i]['start']:
+        if telo_ref[i]['start'] or telo_ref[i]['end']:
             telo_walk_ids.append(i)
         else:
             non_telo_walk_ids.append(i)
@@ -352,7 +390,11 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
     while telo_walk_ids:
         best_walk, best_key_nodes, best_penalty = [], 0, 0
         for walk_id in telo_walk_ids: # the node_id is also the index
-            curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            if telo_ref[walk_id]['start']:
+                curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            else:
+                curr_walk, curr_key_nodes, curr_penalty = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+                curr_walk.reverse()
             if curr_key_nodes > best_key_nodes or (curr_key_nodes == best_key_nodes and curr_penalty < best_penalty):
                 best_key_nodes = curr_key_nodes
                 best_walk = curr_walk
@@ -360,6 +402,7 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
 
         for w in best_walk:
             temp_adj_list.remove_node(w)
+            rev_adj_list.remove_node(w)
             if w < n_old_walks: 
                 if w in telo_walk_ids:
                     telo_walk_ids.remove(w)
@@ -375,6 +418,10 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
         best_walk, best_key_nodes, best_penalty = [], 0, 0
         for walk_id in non_telo_walk_ids: # the node_id is also the index
             curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            curr_walk_rev.reverse(); curr_walk_rev = curr_walk_rev[:-1]; curr_walk_rev.extend(curr_walk); curr_walk = curr_walk_rev
+            curr_key_nodes += (curr_key_nodes_rev-1)
+            curr_penalty += curr_penalty_rev
             if curr_key_nodes > best_key_nodes or (curr_key_nodes == best_key_nodes and curr_penalty < best_penalty):
                 best_key_nodes = curr_key_nodes
                 best_walk = curr_walk
@@ -382,6 +429,7 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
 
         for w in best_walk:
             temp_adj_list.remove_node(w)
+            rev_adj_list.remove_node(w)
             if w < n_old_walks: non_telo_walk_ids.remove(w)
 
         new_walks.append(best_walk)
@@ -396,85 +444,7 @@ def get_telo_type(telo_ref, nid):
     else:
         return y
 
-# def get_telo_ref(old_walks, n2s, graph_path):
-#     """
-#     Generates telomere info for old walks.
-
-#     telo_ref = {
-#         walk_id_1 : {
-#             'start' : '+', '-', or None,
-#             'end' : '+', '-', or None
-#         },
-#         walk_id_2 : { ... },
-#         ...
-#     }
-#     """
-
-#     print("Generating old sequences...")
-#     g = dgl.load_graphs(graph_path)[0][0]
-#     edges = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This is from Martin's script)
-#     for idx, (src, dst) in enumerate(zip(g.edges()[0], g.edges()[1])):
-#         src, dst = src.item(), dst.item()
-#         edges[(src, dst)] = idx
-
-#     contigs = []
-#     for i, walk in enumerate(old_walks):
-#         prefixes = [(src, g.edata['prefix_length'][edges[src,dst]]) for src, dst in zip(walk[:-1], walk[1:])]
-#         res = []
-#         for (src, prefix) in prefixes:
-#             seq = str(n2s[src])
-#             res.append(seq[:prefix])
-#         contig = Seq.Seq(''.join(res) + str(n2s[walk[-1]]))  # TODO: why is this map here? Maybe I can remove it if I work with strings
-#         contig = SeqIO.SeqRecord(contig)
-#         contig.id = f'contig_{i+1}'
-#         contig.description = f'length={len(contig)}'
-#         contigs.append(contig)
-
-#     print("Generating telomere info...")
-#     def count_rep_region(seq, targ):
-#         count, start = 0, 0
-#         while True:
-#             start = seq.find(targ, start)  # Find next occurrence
-#             if start == -1:  # If no more occurrences are found
-#                 break
-#             count += 1  # Increment the count
-#             start += len(targ)  # Move past this occurrence
-#         return count
-    
-#     telo_ref = {}
-#     for i, contig in enumerate(contigs):
-#         curr_res = {'start':None, 'end':None}
-#         seq = str(contig.seq)
-#         len_seq = int(contig.description.split("=")[1])
-        
-#         for j in ['start', 'end']:
-#             cutoff = int(min(MAX_SEARCH_REGION_LEN, len_seq//(1/SEARCH_REGION_P)))
-#             c_seq = seq[:cutoff] if j == 'start' else seq[-cutoff:]
-#             rep1_count, rep2_count = count_rep_region(c_seq, REP1), count_rep_region(c_seq, REP2)
-#             if rep1_count > rep2_count:
-#                 c_percentage = (rep1_count*6)/cutoff
-#                 if c_percentage >= REP_THRESHOLD: curr_res[j] = '+'
-#             else:
-#                 c_percentage = (rep2_count*6)/cutoff
-#                 if c_percentage >= REP_THRESHOLD: curr_res[j] = '-'
-
-#         telo_ref[i] = curr_res
-
-#     start_count, end_count, both_count = 0, 0, 0
-#     for v in telo_ref.values():
-#         if v['start'] and v['end']:
-#             if v['start'] == v['end']: print("WARNING: Found same telomeric region in start and end of old walk!")
-#             both_count += 1
-#         if v['start']:
-#             start_count += 1
-#         if v['end']:
-#             end_count += 1
-#     print(f"Start telo walk count: {start_count}, End telo walk count: {end_count}, Both telo walk count: {both_count}")
-
-#     return telo_ref
-
-def get_contigs(old_walks, new_walks, adj_list, n2s, n2s_ghost, graph_path):
-    g = dgl.load_graphs(graph_path)[0][0]
+def get_contigs(old_walks, new_walks, adj_list, n2s, n2s_ghost, g):
     n_old_walks = len(old_walks)
 
     print("Preprocessing walks...")
@@ -587,10 +557,15 @@ def paf_postprocessing(name, hyperparams, paths):
         n2s = pickle.load(f)
     with open(paths['paf_path'], 'rb') as f:
         paf_data = pickle.load(f)
+    old_graph = dgl.load_graphs(paths['graph_path'])[0][0]
 
     print(f"Chopping old walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    chop_walk_min_count = hyperparams['chop_walk_min_count_ref'][name] if name in hyperparams['chop_walk_min_count_ref'] else CHOP_WALK_MIN_COUNT_DEFAULT
-    walks, telo_ref = chop_walks(walks, n2s, chop_walk_min_count)
+    chop_walk_min_count = hyperparams['chop_walk_min_count_ref'][name] if name in hyperparams['chop_walk_min_count_ref'] else float('inf') # if not specified, number of reps required = infinity, i.e. no telomeric regions will be identified
+    walks, telo_ref = chop_walks(walks, n2s, old_graph, chop_walk_min_count, hyperparams['chop_walk_buffer'])
+
+    ### FOR DEBUGGING ###
+    with open(f"pkls/{name}_telo_ref.pkl", "wb") as p:
+        pickle.dump(telo_ref, p)
 
     n_id = 0
     adj_list = AdjList()
@@ -763,9 +738,6 @@ def paf_postprocessing(name, hyperparams, paths):
         adj_list.adj_list[new_src_nid] = set(n for n in dup_checker.values())
     print("Final number of edges:", sum(len(x) for x in adj_list.adj_list.values()))
 
-    # print(f"Generating telomere reference info... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    # telo_ref = get_telo_ref(walks, n2s, paths['graph_path'])
-
     print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     if hyperparams['walk_var'] == 'default':
         new_walks = get_walks(walk_ids, adj_list, telo_ref)
@@ -777,9 +749,11 @@ def paf_postprocessing(name, hyperparams, paths):
     ### FOR DEBUGGING ###
     # print(adj_list)
     # print(new_walks)
+    with open(f"pkls/{name}_walks_{hyperparams['walk_var']}.pkl", "wb") as p:
+        pickle.dump(new_walks, p)
 
     print(f"Generating contigs... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    contigs = get_contigs(walks, new_walks, adj_list, n2s, n2s_ghost, paths['graph_path'])
+    contigs = get_contigs(walks, new_walks, adj_list, n2s, n2s_ghost, old_graph)
 
     print(f"Calculating assembly metrics... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     asm_metrics(contigs, paths['save_path'], paths['ref_path'])
@@ -850,6 +824,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, or diploid")
     parser.add_argument("--walk_valid_p", type=float, default=0.02)
+    parser.add_argument("--chop_walk_buffer", type=int, default=10)
     parser.add_argument("--ol_len_cutoff", type=int, default=0, help="50, 75, or 90")
     parser.add_argument("--dfs_penalty", type=str, default=None, help="ol_len or ol_sim, leave blank for no penalty")
     parser.add_argument("--walk_var", type=str, default='default', help="default or telomere")
@@ -857,12 +832,13 @@ if __name__ == "__main__":
     dataset = args.dataset
     hyperparams = {
         'chop_walk_min_count_ref' : {
-            'arab' : 100,
-            'chicken' : 1650,
-            'mouse' : 500,
-            'chm13' : 200
+            'arab' : 300,
+            'chicken' : 1000,
+            'mouse' : 250,
+            'chm13' : 100
         },
         'walk_valid_p' : args.walk_valid_p,
+        'chop_walk_buffer' : args.chop_walk_buffer,
         'ol_len_cutoff' : args.ol_len_cutoff,
         'dfs_penalty' : args.dfs_penalty,
         'walk_var' : args.walk_var
@@ -878,6 +854,6 @@ if __name__ == "__main__":
     # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
     for names in [["chicken"], ["arab"], ["chm13"], ["mouse"]]:
-        for walk_var in ["default", "telomere"]:
+        for walk_var in ["telomere", "default"]:
             hyperparams["walk_var"] = walk_var
             run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)

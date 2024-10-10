@@ -209,7 +209,7 @@ def analyse_telomere_2(name, n, min_count_threshold):
     rep1, rep2 = 'TTAGGG', 'CCCTAA'
 
     def count_telo_rep(seq, n):
-        i, rep1_count, rep2_count = 0, 0, 0
+        i, rep1_count, rep2_count, middle_telo_count = 0, 0, 0, 0
         counts = []
         while i < len(seq):
             curr_rep = None
@@ -238,21 +238,25 @@ def analyse_telomere_2(name, n, min_count_threshold):
                         rep1_count += 1
                     else:
                         rep2_count += 1
+
+                    if (i-curr_count*6) > n and (len(seq)-i) > n:
+                        middle_telo_count += 1
             else:
                 i += 1
 
-        return rep1_count, rep2_count, counts
+        return rep1_count, rep2_count, counts, middle_telo_count
 
     fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/0_assembly.fasta"
     with open(fasta_path, 'rt') as handle:
         rows = SeqIO.parse(handle, 'fasta')
     
-        rep1_counts, rep2_counts, counts = [], [], []
+        rep1_counts, rep2_counts, counts, middle_telo_counts = [], [], [], []
         for i, record in enumerate(tqdm(rows, ncols=120)):
             seq = str(record.seq)
 
-            c_rep1_count, c_rep2_count, c_counts = count_telo_rep(seq, n)
-            rep1_counts.append(c_rep1_count); rep2_counts.append(c_rep2_count); counts.extend(c_counts)
+            c_rep1_count, c_rep2_count, c_counts, c_middle_telo_count = count_telo_rep(seq, n)
+            # print(f"walk: {i}, c_rep1_count: {c_rep1_count}, c_rep2_count: {c_rep2_count}")
+            rep1_counts.append(c_rep1_count); rep2_counts.append(c_rep2_count); counts.extend(c_counts); middle_telo_counts.append(c_middle_telo_count)
 
     print(f"rep1 sum: {sum(rep1_counts)}, rep2 sum: {sum(rep2_counts)}")
 
@@ -305,14 +309,25 @@ def analyse_telomere_2(name, n, min_count_threshold):
     plt.tight_layout()
     plt.savefig(f'graphs/telomere/{name}_rep_region_count.png')
     plt.clf()
-    
+
+
+    # third scatter plot for middle walks
+    x = np.arange(len(middle_telo_counts))
+    plt.scatter(x, middle_telo_counts)
+    plt.title(f"genome: {name}, min rep count threshold: {min_count_threshold}")
+    plt.xlabel('Walk ID')
+    plt.ylabel('n telo regions in middle of walk')
+    plt.savefig(f'graphs/telomere/{name}_middle_telo_count.png')
+    plt.clf()
+
+        
 n_repeats = {
     'arab' : 100,
-    'chicken' : 1650,
+    'chicken' : 1000,
     'mouse' : 500,
     'chm13' : 200
 }
-for name in ['chicken', 'mouse', 'chm13', 'arab']:
+for name in ['arab', 'chicken', 'mouse', 'chm13']:
     analyse_telomere_2(name, 10, n_repeats[name])
 
 # For telomere walk generation
@@ -443,3 +458,14 @@ def check_walks_for_dup(name, walks_path):
 #         walks_path = f"/mnt/sod2-project/csb4/wgs/martin/assemblies/chr_{chr}_synth_{v}/walks.pkl"
 #         check_walks_for_dup(chr, walks_path)
 
+def compare_arab_walks():
+    with open("pkls/arab_walks_default.pkl", "rb") as d, open("pkls/arab_walks_telomere.pkl", "rb") as t, open("pkls/arab_telo_ref.pkl", "rb") as tr:
+        default_walks, telomere_walks, telo_ref = pickle.load(d), pickle.load(t), pickle.load(tr)
+
+    print(telo_ref, "\n")
+
+    default_walks.sort(); telomere_walks.sort()
+    print(default_walks, "\n")
+    print(telomere_walks)
+
+# compare_arab_walks()
