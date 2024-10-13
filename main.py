@@ -16,7 +16,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, or diploid")
     parser.add_argument("--add_inner_edges", type=lambda x: (str(x).lower() == 'true'), default=True, help="add inner edges for ghost mode")
 
-    parser.add_argument("--pickle_gfa", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load gfa data")
     parser.add_argument("--pickle_fasta", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load fasta data")
     parser.add_argument("--pickle_paf", type=lambda x: (str(x).lower() == 'true'), default=False, help="whether or not to use pkl file to load paf data")
 
@@ -25,7 +24,6 @@ if __name__ == "__main__":
     dataset = args.dataset
     add_inner_edges = args.add_inner_edges
 
-    pickle_gfa = args.pickle_gfa
     pickle_fasta = args.pickle_fasta
     pickle_paf = args.pickle_paf
     warnings.filterwarnings("ignore")
@@ -35,10 +33,12 @@ if __name__ == "__main__":
             'chm13' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/CHM13/PacBio_HiFi/SRR11292120_3_subreads.fastq.gz'},
             'arab' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/arabidopsis_new/PacBio_HiFi/CRR302668_p0.22.fastq.gz'},
             'mouse' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/mus_musculus/SRR11606870.fastq'},
-            'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz'}
+            'chicken' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz'},
+            'maize-50p' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/zmays_Mo17/HiFi/zmays_Mo17-HiFi_p0.5.fastq.gz'},
+            'maize' : {'fasta' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/zmays_Mo17/HiFi/zmays_Mo17-HiFi.fastq.gz'}
         }
 
-        for i in ['arab', 'chicken', 'mouse', 'chm13']:
+        for i in ['maize-50p', 'maize', 'arab', 'chicken', 'mouse', 'chm13']:
             gfa_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.bp.raw.r_utg.gfa"
             paf_path = f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{i}.ovlp.paf"
             annotated_fasta_path = ref[i]['fasta']
@@ -47,17 +47,8 @@ if __name__ == "__main__":
             print("Starting run for:", i)
 
             ##### Creates initial graph from GFA. #####
-            if pickle_gfa:
-                g = torch.load('../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
-                with open(f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl', 'rb') as f:
-                    aux = pickle.load(f)
-            else:
-                g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
-                torch.save(g, f'../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_g.pt')
-                with open(f"../../../mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/gfa_aux.pkl", "wb") as p:
-                    pickle.dump(aux, p)
+            g, aux = only_from_gfa(gfa_path=gfa_path, get_similarities=get_similarities)
             print('\ng before enhance:', g, '\n')
-
 
             ##### Parsing FASTA file, because read start and end data is required for graph enhancement via PAF. Train data is also retrieved for use later potentially. #####
             if pickle_fasta:

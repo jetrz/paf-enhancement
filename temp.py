@@ -1,4 +1,4 @@
-import dgl, os, pickle, random
+import dgl, gzip, os, pickle, random
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -321,14 +321,14 @@ def analyse_telomere_2(name, n, min_count_threshold):
     plt.clf()
 
         
-n_repeats = {
-    'arab' : 100,
-    'chicken' : 1000,
-    'mouse' : 500,
-    'chm13' : 200
-}
-for name in ['arab', 'chicken', 'mouse', 'chm13']:
-    analyse_telomere_2(name, 10, n_repeats[name])
+# n_repeats = {
+#     'arab' : 100,
+#     'chicken' : 1000,
+#     'mouse' : 500,
+#     'chm13' : 200
+# }
+# for name in ['arab', 'chicken', 'mouse', 'chm13']:
+#     analyse_telomere_2(name, 10, n_repeats[name])
 
 # For telomere walk generation
 REP1, REP2 = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
@@ -469,3 +469,119 @@ def compare_arab_walks():
     print(telomere_walks)
 
 # compare_arab_walks()
+
+def analyse_telomeres_99():
+    refs = {
+        'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
+        'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna',
+        'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/mus_musculus/SRR11606870.fastq',
+        'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta'
+    }
+
+    for name in ['chm13', 'arab', 'chicken', 'mouse']:
+        print(f"\nANALYSING TELOMERE TYPE FOR {name} ===")
+        path = refs[name]
+        if path.endswith('gz'):
+            if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
+                filetype = 'fasta'
+            elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
+                filetype = 'fastq'
+        else:
+            if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
+                filetype = 'fasta'
+            elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
+                filetype = 'fastq'
+
+        with open(path, 'rt') as h:
+            rows = SeqIO.parse(h, filetype)
+            start_count_1s, start_count_2s, end_count_1s, end_count_2s, = [], [], [], []
+            for i, row in enumerate(rows):
+                seq = str(row.seq)
+                cutoff = int(len(seq)*0.01)
+                start, end = seq[:cutoff], seq[-cutoff:]
+                start_count_1, start_count_2 = start.count('TTAGGG'), start.count('CCCTAA')
+                end_count_1, end_count_2 = end.count('TTAGGG'), end.count('CCCTAA')
+                # print(f"i: {i}, start_count_1: {start_count_1}, start_count_2: {start_count_2}, end_count_1: {end_count_1}, end_count_2: {end_count_2}")
+                start_count_1s.append(start_count_1); start_count_2s.append(start_count_2); end_count_1s.append(end_count_1); end_count_2s.append(end_count_2)
+
+        # Calculate correlation coefficients
+        corr_AB = np.corrcoef(start_count_1s, end_count_1s)[0, 1]
+        corr_AC = np.corrcoef(start_count_1s, end_count_2s)[0, 1]
+        corr_DE = np.corrcoef(start_count_2s, end_count_2s)[0, 1]
+        corr_DF = np.corrcoef(start_count_2s, end_count_1s)[0, 1]
+
+        # Create scatter plots
+        plt.figure(figsize=(10, 10))
+        plt.subplot(2, 1, 1)  # 2 rows, 1 column, first subplot
+        plt.scatter(start_count_1s, end_count_1s, color='blue', label=f'+ve vs +ve, Corr: {corr_AB:.2f}')
+        plt.scatter(start_count_1s, end_count_2s, color='red', label=f'+ve vs -ve, Corr: {corr_AC:.2f}')
+        plt.xlabel('start count 1s')
+        plt.ylabel('Values')
+        plt.legend(loc='best')
+        plt.grid(True)
+
+        # Subplot 2: Lists D, E, and F
+        plt.subplot(2, 1, 2)  # 2 rows, 1 column, second subplot
+        plt.scatter(start_count_2s, end_count_2s, color='blue', label=f'-ve vs -ve, Corr: {corr_DE:.2f}')
+        plt.scatter(start_count_2s, end_count_1s, color='red', label=f'-ve vs +ve, Corr: {corr_DF:.2f}')
+        plt.xlabel('start count 2s')
+        plt.ylabel('Values')
+        plt.legend(loc='best')
+        plt.grid(True)
+
+        # Save the figure
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.savefig(f'graphs/telomere/{name}_telo_types.png')  # Save as PNG file
+        plt.show()  # Show the plots
+
+analyse_telomeres_99()
+
+from decoding_paf import AdjList, Edge, remove_cycles
+def test_cycle_removal():
+    adj_list = AdjList()
+    for i in range(5):
+        adj_list.add_edge(Edge(
+            new_src_nid=i,
+            new_dst_nid=(i+1)%5,
+            old_src_nid=None,
+            old_dst_nid=None,
+            prefix_len=0,
+            ol_len=i,
+            ol_sim=0
+        ))
+
+    adj_list.add_edge(Edge(
+        new_src_nid=4,
+        new_dst_nid=5,
+        old_src_nid=None,
+        old_dst_nid=None,
+        prefix_len=0,
+        ol_len=-1,
+        ol_sim=0
+    ))
+
+    adj_list.add_edge(Edge(
+        new_src_nid=5,
+        new_dst_nid=6,
+        old_src_nid=None,
+        old_dst_nid=None,
+        prefix_len=0,
+        ol_len=-2,
+        ol_sim=0
+    ))
+
+    adj_list.add_edge(Edge(
+        new_src_nid=6,
+        new_dst_nid=4,
+        old_src_nid=None,
+        old_dst_nid=None,
+        prefix_len=0,
+        ol_len=-3,
+        ol_sim=0
+    ))
+
+    print("adj_list start:", adj_list)
+    adj_list = remove_cycles(adj_list)
+    print("adj_list_after:", adj_list)
+
+# test_cycle_removal()

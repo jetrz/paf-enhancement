@@ -147,7 +147,7 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
                             'end' : '+' if curr_telo == REP1 else '-'
                         }
                         curr_walk, curr_telo = [], None
-                elif curr_telo != telo_type:
+                elif curr_telo == telo_type:
                     while True:
                         curr_node = walk[curr_ind]
                         curr_walk.append(curr_node)
@@ -157,12 +157,12 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
                             if curr_telo == REP1:
                                 telo_ref[len(new_walks)-1] = {
                                     'start' : '+',
-                                    'end' : '-'
+                                    'end' : '+'
                                 }
                             else:
                                 telo_ref[len(new_walks)-1] = {
                                     'start' : '-',
-                                    'end' : '+'
+                                    'end' : '-'
                                 }
                             curr_walk, curr_telo = [], None
                             break
@@ -215,6 +215,65 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
     print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}, n +ve telomeric regions: {rep1_count}, n -ve telomeric regions: {rep2_count}")
     return new_walks, telo_ref
 
+def remove_cycles(adj_list):
+    """
+    Remove cycles from the graph. In each cycle, the edge with the lowest overlap_length is removed.
+    """
+    cycle_edges, edges_removed = [], 0
+
+    def dfs(node, visited, rec_stack):
+        nonlocal cycle_edges
+        # print("dfs called. node:", node, "visited:", visited, "rec_stack", rec_stack, "cycle_edges", cycle_edges)
+        visited.add(node)
+        rec_stack.add(node)
+        
+        # Traverse all neighbors
+        for neighbor in adj_list.get_neighbours(node):
+            if neighbor.new_dst_nid not in visited:
+                res, cycle_start = dfs(neighbor.new_dst_nid, visited, rec_stack)
+                if res:
+                    if cycle_start != None:
+                        cycle_edges.append(neighbor)
+                        if node == cycle_start: cycle_start = None 
+                    return True, cycle_start
+            elif neighbor.new_dst_nid in rec_stack:
+                # Found a cycle, store the edge
+                cycle_edges.append(neighbor)
+                return True, neighbor.new_dst_nid
+
+        rec_stack.remove(node)
+        return False, None
+
+    def detect_cycles():
+        visited, rec_stack = set(), set()
+        nonlocal cycle_edges
+        cycle_edges = []
+        
+        for node in adj_list.adj_list.keys():
+            if node not in visited:
+                res, _ = dfs(node, visited, rec_stack)
+                if res: break
+
+    def remove_min_similarity_edge():
+        nonlocal cycle_edges
+        # Find the edge with the minimum overlap_similarity
+        if not cycle_edges:
+            return False  # No cycle found
+        
+        min_edge = min(cycle_edges, key=lambda edge: edge.ol_len)
+        adj_list.remove_edge(min_edge)
+        edges_removed += 1
+        return True
+
+    # Keep detecting and removing cycles until none remain
+    while True:
+        detect_cycles()
+        if not remove_min_similarity_edge():
+            break
+
+    print("Edges removed to break cycles:", edges_removed)
+    return adj_list
+
 def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50):
     # Dictionary to memoize the longest walk from each node
     memo, memo_counts = {}, defaultdict(int)
@@ -231,7 +290,7 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
         # If the longest walk starting from this node is already memoised and telomere is compatible, return it
         if node in memo: 
             memo_telo = memo[node][3]
-            if walk_telo is None or memo_telo != walk_telo:
+            if walk_telo is None or memo_telo == walk_telo:
                 return memo[node][0], memo[node][1], memo[node][2]
 
         visited.add(node)
@@ -247,10 +306,10 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
             if dst < n_old_walks:
                 curr_telo = get_telo_type(telo_ref, dst)
                 if curr_telo:
-                    if walk_telo != curr_telo:
+                    if walk_telo == curr_telo:
                         terminate = True
                     else:
-                        continue # ++/-- telomere connection
+                        continue # +-/-+ telomere connection
 
             if terminate:
                 # Terminate search at the next node due to telomere compatibility
@@ -327,6 +386,7 @@ def get_walks(walk_ids, adj_list, telo_ref):
         if v['start'] and v['end']:
             new_walks.append([walk_id])
             temp_adj_list.remove_node(walk_id)
+            rev_adj_list.remove_node(walk_id)
             temp_walk_ids.remove(walk_id)
 
     # Loop until all walks are connected
@@ -376,6 +436,7 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
         if v['start'] and v['end']:
             new_walks.append([walk_id])
             temp_adj_list.remove_node(walk_id)
+            rev_adj_list.remove_node(walk_id)
             temp_walk_ids.remove(walk_id)
 
     # Split walks into those with telomeric regions and those without
@@ -564,8 +625,8 @@ def paf_postprocessing(name, hyperparams, paths):
     walks, telo_ref = chop_walks(walks, n2s, old_graph, chop_walk_min_count, hyperparams['chop_walk_buffer'])
 
     ### FOR DEBUGGING ###
-    with open(f"pkls/{name}_telo_ref.pkl", "wb") as p:
-        pickle.dump(telo_ref, p)
+    # with open(f"pkls/{name}_telo_ref.pkl", "wb") as p:
+    #     pickle.dump(telo_ref, p)
 
     n_id = 0
     adj_list = AdjList()
@@ -736,6 +797,9 @@ def paf_postprocessing(name, hyperparams, paths):
                     raise ValueError("Duplicate edge between two non-walks found!")
                 
         adj_list.adj_list[new_src_nid] = set(n for n in dup_checker.values())
+
+    print(f"Removing cycles... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    adj_list = remove_cycles(adj_list)
     print("Final number of edges:", sum(len(x) for x in adj_list.adj_list.values()))
 
     print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
@@ -749,8 +813,8 @@ def paf_postprocessing(name, hyperparams, paths):
     ### FOR DEBUGGING ###
     # print(adj_list)
     # print(new_walks)
-    with open(f"pkls/{name}_walks_{hyperparams['walk_var']}.pkl", "wb") as p:
-        pickle.dump(new_walks, p)
+    # with open(f"pkls/{name}_walks_{hyperparams['walk_var']}.pkl", "wb") as p:
+    #     pickle.dump(new_walks, p)
 
     print(f"Generating contigs... (Time: {timedelta_to_str(datetime.now() - time_start)})")
     contigs = get_contigs(walks, new_walks, adj_list, n2s, n2s_ghost, old_graph)
@@ -832,10 +896,10 @@ if __name__ == "__main__":
     dataset = args.dataset
     hyperparams = {
         'chop_walk_min_count_ref' : {
-            'arab' : 300,
+            'arab' : 400,
             'chicken' : 1000,
-            'mouse' : 250,
-            'chm13' : 100
+            'mouse' : 500,
+            'chm13' : 175
         },
         'walk_valid_p' : args.walk_valid_p,
         'chop_walk_buffer' : args.chop_walk_buffer,
@@ -853,7 +917,7 @@ if __name__ == "__main__":
 
     # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
-    for names in [["chicken"], ["arab"], ["chm13"], ["mouse"]]:
+    for names in [["mouse"], ["arab"], ["chicken"], ["chm13"]]:
         for walk_var in ["telomere", "default"]:
             hyperparams["walk_var"] = walk_var
             run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
