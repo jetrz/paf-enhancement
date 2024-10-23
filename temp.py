@@ -1,4 +1,5 @@
-import dgl, gzip, os, pickle, random
+import dgl, gzip, os, pickle, random, subprocess
+from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,6 +8,15 @@ from Bio import Seq, SeqIO
 from tqdm import tqdm
 
 from decoding_paf import AdjList, Edge
+
+HAPLOID_TEST_REF = {
+    'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
+    'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
+    'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/mus_musculus/mmusculus_GRCm39.fna',
+    'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna',
+    'maize-50p' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta',
+    'maize' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta'
+}
 
 def analyse(name, hop):
     print(f"\n=== ANALYSING FOR {name} ===\n")
@@ -534,54 +544,160 @@ def analyse_telomeres_99():
         plt.savefig(f'graphs/telomere/{name}_telo_types.png')  # Save as PNG file
         plt.show()  # Show the plots
 
-analyse_telomeres_99()
+# analyse_telomeres_99()
 
-from decoding_paf import AdjList, Edge, remove_cycles
-def test_cycle_removal():
-    adj_list = AdjList()
-    for i in range(5):
-        adj_list.add_edge(Edge(
-            new_src_nid=i,
-            new_dst_nid=(i+1)%5,
-            old_src_nid=None,
-            old_dst_nid=None,
-            prefix_len=0,
-            ol_len=i,
-            ol_sim=0
-        ))
+# from decoding_paf import AdjList, Edge, remove_cycles
+# def test_cycle_removal():
+#     adj_list = AdjList()
+#     for i in range(5):
+#         adj_list.add_edge(Edge(
+#             new_src_nid=i,
+#             new_dst_nid=(i+1)%5,
+#             old_src_nid=None,
+#             old_dst_nid=None,
+#             prefix_len=0,
+#             ol_len=i,
+#             ol_sim=0
+#         ))
 
-    adj_list.add_edge(Edge(
-        new_src_nid=4,
-        new_dst_nid=5,
-        old_src_nid=None,
-        old_dst_nid=None,
-        prefix_len=0,
-        ol_len=-1,
-        ol_sim=0
-    ))
-
-    adj_list.add_edge(Edge(
-        new_src_nid=5,
-        new_dst_nid=6,
-        old_src_nid=None,
-        old_dst_nid=None,
-        prefix_len=0,
-        ol_len=-2,
-        ol_sim=0
-    ))
-
-    adj_list.add_edge(Edge(
-        new_src_nid=6,
-        new_dst_nid=4,
-        old_src_nid=None,
-        old_dst_nid=None,
-        prefix_len=0,
-        ol_len=-3,
-        ol_sim=0
-    ))
-
-    print("adj_list start:", adj_list)
-    adj_list = remove_cycles(adj_list)
-    print("adj_list_after:", adj_list)
+#     print("adj_list start:", adj_list)
+#     adj_list = remove_cycles(adj_list)
+#     print("adj_list_after:", adj_list)
 
 # test_cycle_removal()
+
+def telomere_extraction(name, walks_fasta_path, seqtk_path='../GitHub/seqtk/seqtk'):
+    if name in ["maize", "maize-50p", "arab"]:
+        rep1, rep2 = 'TTTAGGG', 'CCCTAAA'
+    else:
+        rep1, rep2 = 'TTAGGG', 'CCCTAA'
+    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} {walks_fasta_path}"
+    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} {walks_fasta_path}"
+    seqtk_res_rep1 = subprocess.run(seqtk_cmd_rep1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    seqtk_res_rep2 = subprocess.run(seqtk_cmd_rep2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    seqtk_res_rep1 = seqtk_res_rep1.stdout.split("\n"); seqtk_res_rep1.pop()
+    seqtk_res_rep2 = seqtk_res_rep2.stdout.split("\n"); seqtk_res_rep2.pop()
+    telo_info = defaultdict(dict)
+
+    print(f"=== RUNNING FOR {name} ===")
+    print("seqtk_res_rep1:", seqtk_res_rep1)
+    print("seqtk_res_rep2:", seqtk_res_rep2)
+    for row in seqtk_res_rep1:
+        row_split = row.split("\t")
+        walk_id, start, end = int(row_split[0].split("_")[1]), int(row_split[1]), int(row_split[2])
+        if start in telo_info[walk_id]:
+            print("Duplicate telomere region found 1!")
+        else:
+            telo_info[walk_id][start] = end
+    for row in seqtk_res_rep2:
+        row_split = row.split("\t")
+        walk_id, start, end = int(row_split[0].split("_")[1]), int(row_split[1]), int(row_split[2])
+        if start in telo_info[walk_id]:
+            print("Duplicate telomere region found 2!")
+        else:
+            telo_info[walk_id][start] = end
+    
+# for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
+#     walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
+#     telomere_extraction(n, walks_fasta_path)
+
+def test_are_walks_order_the_same(name):
+    print(f"=== CHECKING FOR {name} ===")
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl", 'rb') as f:
+        n2s = pickle.load(f)
+    graph = dgl.load_graphs(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl")[0][0]
+    
+    edges_full = {}
+    for idx, (src, dst) in enumerate(zip(graph.edges()[0], graph.edges()[1])):
+        src, dst = src.item(), dst.item()
+        edges_full[(src, dst)] = idx
+
+    fasta_seqs = []
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/0_assembly.fasta", 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        for i, record in enumerate(tqdm(rows, ncols=120)):
+            seq = str(record.seq)
+            fasta_seqs.append(seq)
+
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl", 'rb') as f:
+        walks = pickle.load(f)
+        # for z, walk in enumerate(walks):
+        #     curr_pos, curr_fasta_seq = 0, fasta_seqs[z]
+        #     for idx, node in enumerate(walk):
+        #         # Preprocess the sequence
+        #         c_seq = str(n2s[node])
+        #         if idx != len(walk)-1:
+        #             c_prefix = graph.edata['prefix_length'][edges_full[node,walk[idx+1]]]
+        #             c_seq = c_seq[:c_prefix]
+                
+        #         c_len_seq = len(c_seq)
+        #         if curr_pos+c_len_seq <= len(curr_fasta_seq):
+        #             curr_fasta_seq_seg = curr_fasta_seq[curr_pos:curr_pos+c_len_seq]
+        #             if c_seq != curr_fasta_seq_seg:
+        #                 print(f"In walk {z}, node {idx} out of {len(walk)-1} nodes. Sequences do not match!")
+        #         else:
+        #             print(f"In walk {z}, node {idx} out of {len(walk)-1} nodes. Ran out of length in fasta seq.")
+        #         curr_pos += c_len_seq
+
+
+        for i, walk in enumerate(walks):
+            prefixes = [(src, graph.edata['prefix_length'][edges_full[src,dst]]) for src, dst in zip(walk[:-1], walk[1:])]
+
+            res = []
+            for (src, prefix) in prefixes:
+                seq = str(n2s[src])
+                res.append(seq[:prefix])
+
+            contig = ''.join(res) + str(n2s[walk[-1]]) # TODO: why is this map here? Maybe I can remove it if I work with strings
+            if contig != fasta_seqs[i]: print("DIFFERENT! i:", i)
+
+# for n in ['mouse']:
+#     test_are_walks_order_the_same(n)
+
+from decoding_paf import chop_walks_seqtk
+def run_chop_walks_seqtk(name):
+    print(f"=== RUNNING FOR {name} ===")
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl", 'rb') as f:
+        walks = pickle.load(f)
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl", 'rb') as f:
+        n2s = pickle.load(f)
+    old_graph = dgl.load_graphs(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl")[0][0]
+    seqtk_path = "../GitHub/seqtk/seqtk"
+    telo_motif_ref = {
+        'arab' : ("TTTAGGG", "CCCTAAA"),
+        'chicken' : ("TTAGGG", "CCCTAA"),
+        'mouse' : ("TTAGGG", "CCCTAA"),
+        'chm13' : ("TTAGGG", "CCCTAA"),
+        'maize-50p' : ("TTTAGGG", "CCCTAAA"),
+        'maize' : ("TTTAGGG", "CCCTAAA")
+    }
+    chop_walks_seqtk(walks, n2s, old_graph, telo_motif_ref[name][0], telo_motif_ref[name][1], seqtk_path)
+
+# for n in ['arab', 'chicken', 'mouse']:
+#     run_chop_walks_seqtk(n)
+
+def run_quast(name, type):
+    print(f"=== RUNNING QUAST FOR {name}, {type} ===")
+    asm_dir_name = 'default' if type == "GNNome" else type 
+    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/analysis/quast/{type}/{name}/'
+    cmd = f"quast /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/{asm_dir_name}/{name}/0_assembly.fasta -r {HAPLOID_TEST_REF[name]} -o {save_path} -t 16"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    # print(cmd)
+    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+# for n in ['chm13', 'maize-50p']:
+#     run_quast(n, 'postprocessed')
+
+def run_compleasm(name, type):
+    print(f"=== RUNNING COMPLEASM FOR {name}, {type} ===")
+    asm_dir_name = 'default' if type == "GNNome" else type 
+    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/analysis/compleasm/{type}/{name}/'
+    cmd = f"python ../GitHub/compleasm_kit/compleasm.py run -a /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/{asm_dir_name}/{name}/0_assembly.fasta -o {save_path} --autolineage -t 16"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    # print(cmd)
+    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+for n in ['arab', 'chicken', 'chm13', 'maize-50p']:
+    run_compleasm(n, 'postprocessed')

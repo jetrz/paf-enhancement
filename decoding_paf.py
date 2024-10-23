@@ -7,9 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # For telomere operations
-REP1, REP2 = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
-# For use in cutoff metric
-OL_LEN_CUTOFF_50, OL_LEN_CUTOFF_75, OL_LEN_CUTOFF_90 = 3875, 6765, 10000 # 50th, 75th, 90th percentile of OL Len for edges with gt_bin=0, averaged over training graphs. For use in cutoff metric
+REP1_DEFAULT, REP2_DEFAULT = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
 
 class Edge():
     def __init__(self, new_src_nid, new_dst_nid, old_src_nid, old_dst_nid, prefix_len, ol_len, ol_sim):
@@ -72,16 +70,17 @@ def timedelta_to_str(delta):
     minutes, seconds = divmod(remainder, 60)
     return f'{hours}h {minutes}m {seconds}s'
 
-def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
+def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
     # Create a list of all edges
     edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This is from Martin's script)
     for idx, (src, dst) in enumerate(zip(graph.edges()[0], graph.edges()[1])):
         src, dst = src.item(), dst.item()
         edges_full[(src, dst)] = idx
 
-    def chop_indiv_walk(walk):
-        # This function could probably be optimised by only using 2 or even 1 pass through the nodes. But to minimise bugs i'm doing it step by step
-        seq, curr_pos, pos_to_node = "", 0, {}
+    # Regenerate old contigs
+    old_contigs, pos_to_node = [], defaultdict(dict)
+    for walk_id, walk in enumerate(old_walks):
+        seq, curr_pos = "", 0
         for idx, node in enumerate(walk):
             # Preprocess the sequence
             c_seq = str(n2s[node])
@@ -92,47 +91,50 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
             seq += c_seq
             c_len_seq = len(c_seq)
             for i in range(curr_pos, curr_pos+c_len_seq):
-                pos_to_node[i] = node
+                pos_to_node[walk_id][i] = node
             curr_pos += c_len_seq
-            
-        # Generate telomeric regions
-        i = 0
-        rep_regs = {}
-        while i < len(seq):
-            curr_telo = None
-            if seq.startswith(REP1, i) or seq.startswith(REP2, i):
-                start_node = pos_to_node[i]
-                if seq.startswith(REP1, i):
-                    curr_telo = REP1
-                elif seq.startswith(REP2, i):
-                    curr_telo = REP2
+        old_contigs.append(seq)
+    
+    with open('temp.fasta', 'w') as f:
+        for i, contig in enumerate(old_contigs):
+            f.write(f'>{i}\n')  # Using index as ID
+            f.write(f'{contig}\n')
 
-                curr_count = 1
-                end_index = i+6
-                while end_index < len(seq):
-                    next_index = seq.find(curr_telo, end_index)
-                    if next_index == -1: break
-                    if next_index - end_index <= chop_walk_buffer:
-                        curr_count += 1
-                        end_index = next_index + 6
-                    else:
-                        break
+    # Use seqtk to get telomeric regions
+    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} temp.fasta"
+    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} temp.fasta"
+    seqtk_res_rep1 = subprocess.run(seqtk_cmd_rep1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    seqtk_res_rep2 = subprocess.run(seqtk_cmd_rep2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    seqtk_res_rep1 = seqtk_res_rep1.stdout.split("\n"); seqtk_res_rep1.pop()
+    seqtk_res_rep2 = seqtk_res_rep2.stdout.split("\n"); seqtk_res_rep2.pop()
+    telo_info = defaultdict(dict)
+    for row in seqtk_res_rep1:
+        row_split = row.split("\t")
+        walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+        start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
+        if start_node in telo_info[walk_id]:
+            print("Duplicate telomere region found 1!")
+        else:
+            telo_info[walk_id][start_node] = (end_node, rep1)
+    for row in seqtk_res_rep2:
+        row_split = row.split("\t")
+        walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+        start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
+        if start_node in telo_info[walk_id]:
+            print("Duplicate telomere region found 2!")
+        else:
+            telo_info[walk_id][start_node] = (end_node, rep2)
+    os.remove('temp.fasta')
 
-                i = end_index
-
-                if curr_count >= chop_walk_min_count:
-                    rep_regs[start_node] = (pos_to_node[i-1], curr_telo)
-            else:
-                i += 1
-
-        # Chop walks
-        new_walks, telo_ref = [], {}
+    # Chop walks
+    new_walks, telo_ref = [], {}
+    for walk_id, walk in enumerate(old_walks):
         curr_ind, curr_walk, curr_telo = 0, [], None
         while curr_ind < len(walk):
             curr_node = walk[curr_ind]
-            if curr_node in rep_regs:
-                end_node, telo_type = rep_regs[curr_node]
-                if curr_telo is None:
+            if curr_node in telo_info[walk_id]:
+                end_node, telo_type = telo_info[walk_id][curr_node]
+                if curr_telo is None: # There is currently no telo type in the walk. 
                     curr_telo = telo_type
                     init_walk_len = len(curr_walk)
                     while True:
@@ -144,32 +146,13 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
                         new_walks.append(curr_walk.copy())
                         telo_ref[len(new_walks)-1] = {
                             'start' : None,
-                            'end' : '+' if curr_telo == REP1 else '-'
+                            'end' : '+' if curr_telo == rep1 else '-'
                         }
                         curr_walk, curr_telo = [], None
-                elif curr_telo == telo_type:
-                    while True:
-                        curr_node = walk[curr_ind]
-                        curr_walk.append(curr_node)
-                        curr_ind += 1
-                        if curr_node == end_node: 
-                            new_walks.append(curr_walk.copy())
-                            if curr_telo == REP1:
-                                telo_ref[len(new_walks)-1] = {
-                                    'start' : '+',
-                                    'end' : '+'
-                                }
-                            else:
-                                telo_ref[len(new_walks)-1] = {
-                                    'start' : '-',
-                                    'end' : '-'
-                                }
-                            curr_walk, curr_telo = [], None
-                            break
-                else:
+                elif curr_telo != telo_type: # The newly found telo type does not match the current walk's telo type. Should be chopped immediately.
                     new_walks.append(curr_walk.copy())
                     telo_ref[len(new_walks)-1] = {
-                        'start' : '+' if curr_telo == REP1 else '-',
+                        'start' : '+' if curr_telo == rep1 else '-',
                         'end' : None
                     }
                     curr_walk, curr_telo = [], telo_type
@@ -178,15 +161,28 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
                         curr_walk.append(curr_node)
                         curr_ind += 1
                         if curr_node == end_node: break
+                else: # The newly found telo type matches the current walk's telo type. Add the telomeric region, then chop the walk.
+                    while True:
+                        curr_node = walk[curr_ind]
+                        curr_walk.append(curr_node)
+                        curr_ind += 1
+                        if curr_node == end_node: 
+                            new_walks.append(curr_walk.copy())
+                            telo_ref[len(new_walks)-1] = {
+                                'start' : '+' if curr_telo == rep1 else '-',
+                                'end' : '+' if telo_type == rep1 else '-'
+                            }
+                            curr_walk, curr_telo = [], None
+                            break
             else:
                 curr_walk.append(curr_node)
                 curr_ind += 1
 
         if curr_walk: 
             new_walks.append(curr_walk.copy())
-            if curr_telo == REP1:
+            if curr_telo == rep1:
                 start_telo = '+'
-            elif curr_telo == REP2:
+            elif curr_telo == rep2:
                 start_telo = '-'
             else:
                 start_telo = None
@@ -195,102 +191,110 @@ def chop_walks(old_walks, n2s, graph, chop_walk_min_count, chop_walk_buffer):
                 'end' : None
             }
 
-        # Sanity Check
-        combined_list = [item for inner in new_walks for item in inner]
-        assert combined_list == walk, "Not all nodes accounted for when chopping old walk!"
-
-        return new_walks, telo_ref
-
-    new_walks, telo_ref = [], {}
-    for walk in tqdm(old_walks, ncols=120):
-        c_walks, c_telo_ref = chop_indiv_walk(walk)
-        for i, w in enumerate(c_walks):
-            new_walks.append(w)
-            telo_ref[len(new_walks)-1] = c_telo_ref[i]
+    # Sanity Check
+    assert [item for inner in new_walks for item in inner] == [item for inner in old_walks for item in inner], "Not all nodes accounted for when chopping old walks!"
 
     rep1_count, rep2_count = 0, 0
     for v in telo_ref.values():
-        if v['start'] == '+' or v['end'] == '+': rep1_count += 1
-        if v['start'] == '-' or v['end'] == '-': rep2_count += 1
+        if v['start'] == '+': rep1_count += 1
+        if v['end'] == '+': rep1_count += 1
+        if v['start'] == '-': rep2_count += 1
+        if v['end'] == '-': rep2_count += 1
     print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}, n +ve telomeric regions: {rep1_count}, n -ve telomeric regions: {rep2_count}")
     return new_walks, telo_ref
 
-def remove_cycles(adj_list):
-    """
-    Remove cycles from the graph. In each cycle, the edge with the lowest overlap_length is removed.
-    """
-    cycle_edges, edges_removed = [], 0
+# def remove_cycles(adj_list):
+#     """
+#     Remove cycles from the graph. In each cycle, the edge with the lowest overlap_length is removed.
+#     """
+#     cycle_edges, edges_removed = [], 0
 
-    def dfs(node, visited, rec_stack):
-        nonlocal cycle_edges
-        # print("dfs called. node:", node, "visited:", visited, "rec_stack", rec_stack, "cycle_edges", cycle_edges)
-        visited.add(node)
-        rec_stack.add(node)
+#     def dfs(node, visited, rec_stack):
+#         nonlocal cycle_edges
+#         # print("dfs called. node:", node, "visited:", visited, "rec_stack", rec_stack, "cycle_edges", cycle_edges)
+#         visited.add(node)
+#         rec_stack.add(node)
         
-        # Traverse all neighbors
-        for neighbor in adj_list.get_neighbours(node):
-            if neighbor.new_dst_nid not in visited:
-                res, cycle_start = dfs(neighbor.new_dst_nid, visited, rec_stack)
-                if res:
-                    if cycle_start != None:
-                        cycle_edges.append(neighbor)
-                        if node == cycle_start: cycle_start = None 
-                    return True, cycle_start
-            elif neighbor.new_dst_nid in rec_stack:
-                # Found a cycle, store the edge
-                cycle_edges.append(neighbor)
-                return True, neighbor.new_dst_nid
+#         # Traverse all neighbors
+#         for neighbor in adj_list.get_neighbours(node):
+#             if neighbor.new_dst_nid not in visited:
+#                 res, cycle_start = dfs(neighbor.new_dst_nid, visited, rec_stack)
+#                 if res:
+#                     if cycle_start != None:
+#                         cycle_edges.append(neighbor)
+#                         if node == cycle_start: cycle_start = None 
+#                     return True, cycle_start
+#             elif neighbor.new_dst_nid in rec_stack:
+#                 # Found a cycle, store the edge
+#                 cycle_edges.append(neighbor)
+#                 return True, neighbor.new_dst_nid
 
-        rec_stack.remove(node)
-        return False, None
+#         rec_stack.remove(node)
+#         return False, None
 
-    def detect_cycles():
-        visited, rec_stack = set(), set()
-        nonlocal cycle_edges
-        cycle_edges = []
+#     def detect_cycles():
+#         visited, rec_stack = set(), set()
+#         nonlocal cycle_edges
+#         cycle_edges = []
         
-        for node in adj_list.adj_list.keys():
-            if node not in visited:
-                res, _ = dfs(node, visited, rec_stack)
-                if res: break
+#         for node in adj_list.adj_list.keys():
+#             if node not in visited:
+#                 res, _ = dfs(node, visited, rec_stack)
+#                 if res: break
 
-    def remove_min_similarity_edge():
-        nonlocal cycle_edges
-        # Find the edge with the minimum overlap_similarity
-        if not cycle_edges:
-            return False  # No cycle found
+#     def remove_min_similarity_edge():
+#         nonlocal cycle_edges, edges_removed
+#         # Find the edge with the minimum overlap_similarity
+#         if not cycle_edges:
+#             return False  # No cycle found
         
-        min_edge = min(cycle_edges, key=lambda edge: edge.ol_len)
-        adj_list.remove_edge(min_edge)
-        edges_removed += 1
-        return True
+#         min_edge = min(cycle_edges, key=lambda edge: edge.ol_len)
+#         adj_list.remove_edge(min_edge)
+#         edges_removed += 1
+#         return True
 
-    # Keep detecting and removing cycles until none remain
-    while True:
-        detect_cycles()
-        if not remove_min_similarity_edge():
-            break
+#     # Keep detecting and removing cycles until none remain
+#     while True:
+#         detect_cycles()
+#         if not remove_min_similarity_edge():
+#             break
 
-    print("Edges removed to break cycles:", edges_removed)
-    return adj_list
+#     print("Edges removed to break cycles:", edges_removed)
+#     return adj_list
 
-def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50):
+def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50, visited_init=set()):
     # Dictionary to memoize the longest walk from each node
     memo, memo_counts = {}, defaultdict(int)
 
+    def get_telo_info(node):
+        if node >= n_old_walks: return None
+
+        if telo_ref[node]['start']:
+            return ('start', telo_ref[node]['start'])
+        elif telo_ref[node]['end']:
+            return ('end', telo_ref[node]['end'])
+        else:
+            return None
+
+    def check_telo_compatibility(t1, t2):
+        if t1 is None or t2 is None:
+            return True
+        elif t1[0] != t2[0] and t1[1] == t2[1]: # The position must be different, but motif var must be the same.
+            return True
+        else:
+            return False
+
     def dfs(node, visited, walk_telo):
         if node < n_old_walks:
-            if telo_ref[node]['start']:
-                if walk_telo: print("WARNING: Trying to set walk_telo when it is already set!")
-                walk_telo = telo_ref[node]['start']
-            elif telo_ref[node]['end']:
-                if walk_telo: print("WARNING: Trying to set walk_telo when it is already set!")
-                walk_telo = telo_ref[node]['end']
+            telo_info = get_telo_info(node)
+            if telo_info is not None:
+                if walk_telo: print("WARNING: Trying to set walk_telo when it is already set!") 
+                walk_telo = telo_info
 
         # If the longest walk starting from this node is already memoised and telomere is compatible, return it
         if node in memo: 
             memo_telo = memo[node][3]
-            if walk_telo is None or memo_telo == walk_telo:
+            if check_telo_compatibility(walk_telo, memo_telo):
                 return memo[node][0], memo[node][1], memo[node][2]
 
         visited.add(node)
@@ -304,12 +308,12 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
             # Check telomere compatibility
             terminate = False
             if dst < n_old_walks:
-                curr_telo = get_telo_type(telo_ref, dst)
-                if curr_telo:
-                    if walk_telo == curr_telo:
+                curr_telo = get_telo_info(dst)
+                if curr_telo is not None:
+                    if check_telo_compatibility(walk_telo, curr_telo):
                         terminate = True
                     else:
-                        continue # +-/-+ telomere connection
+                        continue 
 
             if terminate:
                 # Terminate search at the next node due to telomere compatibility
@@ -320,7 +324,7 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
 
             # Add the penalty for selecting that neighbour, either based on OL Len or OL Sim
             if penalty == "ol_len":
-                if neighbor.ol_len < OL_LEN_CUTOFF_90: current_penalty += (OL_LEN_CUTOFF_90-neighbor.ol_len)
+                current_penalty -= neighbor.ol_len
             elif penalty == "ol_sim":
                 current_penalty += -1*neighbor.ol_sim
 
@@ -328,7 +332,7 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
                 prev_node = node if len(current_walk) == 1 else current_walk[-2]
                 curr_edge = adj_list.get_edge(prev_node, current_walk[-1])
                 if penalty == "ol_len":
-                    if curr_edge.ol_len < OL_LEN_CUTOFF_90: current_penalty -= (OL_LEN_CUTOFF_90-curr_edge.ol_len)
+                    current_penalty -= curr_edge.ol_len
                 elif penalty == "ol_sim":
                     current_penalty -= curr_edge.ol_sim
 
@@ -344,12 +348,18 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
         # Memoize the result for this node if chances are used up
         memo_counts[node] += 1
         if memo_counts[node] >= memo_chances:
-            memo[node] = (max_walk, max_key_nodes, min_penalty, walk_telo)
+            if len(max_walk) == 1 and max_walk[-1] >= n_old_walks:
+                curr_telo = None
+            elif max_walk[-1] < n_old_walks:
+                curr_telo = get_telo_info(max_walk[-1])
+            else:
+                curr_telo = get_telo_info(max_walk[-2])
+            memo[node] = (max_walk, max_key_nodes, min_penalty, curr_telo)
 
         return max_walk, max_key_nodes, min_penalty    
 
     # Start DFS from the given start node
-    res_walk, res_key_nodes, res_penalty = dfs(start_node, set(), None)
+    res_walk, res_key_nodes, res_penalty = dfs(start_node, visited_init, None)
 
     # If the last node in a walk is a ghost node, remove it from the walk and negate its penalty.
     # This case should not occur, but I am just double checking
@@ -394,7 +404,8 @@ def get_walks(walk_ids, adj_list, telo_ref):
         best_walk, best_key_nodes, best_penalty = [], 0, 0
         for walk_id in temp_walk_ids: # the node_id is also the index
             curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
-            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            visited_init = set(curr_walk[1:]) if len(curr_walk) > 1 else set()
+            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'], visited_init=visited_init)
             curr_walk_rev.reverse(); curr_walk_rev = curr_walk_rev[:-1]; curr_walk_rev.extend(curr_walk); curr_walk = curr_walk_rev
             curr_key_nodes += (curr_key_nodes_rev-1)
             curr_penalty += curr_penalty_rev
@@ -479,7 +490,8 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
         best_walk, best_key_nodes, best_penalty = [], 0, 0
         for walk_id in non_telo_walk_ids: # the node_id is also the index
             curr_walk, curr_key_nodes, curr_penalty = get_best_walk(temp_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
-            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'])
+            visited_init = set(curr_walk[1:]) if len(curr_walk) > 1 else set()
+            curr_walk_rev, curr_key_nodes_rev, curr_penalty_rev = get_best_walk(rev_adj_list, walk_id, n_old_walks, telo_ref, hyperparams['dfs_penalty'], visited_init=visited_init)
             curr_walk_rev.reverse(); curr_walk_rev = curr_walk_rev[:-1]; curr_walk_rev.extend(curr_walk); curr_walk = curr_walk_rev
             curr_key_nodes += (curr_key_nodes_rev-1)
             curr_penalty += curr_penalty_rev
@@ -497,13 +509,6 @@ def get_walks_telomere(walk_ids, adj_list, telo_ref):
 
     print(f"New walks generated! n new walks: {len(new_walks)}")
     return new_walks
-
-def get_telo_type(telo_ref, nid):
-    x, y = telo_ref[nid]['start'], telo_ref[nid]['end']
-    if x is not None:
-        return x
-    else:
-        return y
 
 def get_contigs(old_walks, new_walks, adj_list, n2s, n2s_ghost, g):
     n_old_walks = len(old_walks)
@@ -621,8 +626,14 @@ def paf_postprocessing(name, hyperparams, paths):
     old_graph = dgl.load_graphs(paths['graph_path'])[0][0]
 
     print(f"Chopping old walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    chop_walk_min_count = hyperparams['chop_walk_min_count_ref'][name] if name in hyperparams['chop_walk_min_count_ref'] else float('inf') # if not specified, number of reps required = infinity, i.e. no telomeric regions will be identified
-    walks, telo_ref = chop_walks(walks, n2s, old_graph, chop_walk_min_count, hyperparams['chop_walk_buffer'])
+    if hyperparams['use_telomere_info']:
+        if name in hyperparams['telo_motif_ref']:
+            rep1, rep2 = hyperparams['telo_motif_ref'][name][0], hyperparams['telo_motif_ref'][name][1]
+        else:
+            rep1, rep2 = REP1_DEFAULT, REP2_DEFAULT
+        walks, telo_ref = chop_walks_seqtk(walks, n2s, old_graph, rep1, rep2, paths['seqtk_path'])
+    else:
+        telo_ref = { i:{'start':None, 'end':None} for i in range(len(walks)) }
 
     ### FOR DEBUGGING ###
     # with open(f"pkls/{name}_telo_ref.pkl", "wb") as p:
@@ -634,7 +645,10 @@ def paf_postprocessing(name, hyperparams, paths):
     # Only the first and last walk_valid_p% of nodes in a walk can be connected. Also initialises nodes from walks
     n2n_start, n2n_end = {}, {} # n2n maps old n_id to new n_id, for the start and ends of the walks respectively
     walk_ids = [] # all n_ids that belong to walks
+    nodes_in_old_walks = set()
     for walk in walks:
+        nodes_in_old_walks.update(walk)
+
         if len(walk) == 1:
             n2n_start[walk[0]] = n_id
             n2n_end[walk[0]] = n_id
@@ -652,19 +666,10 @@ def paf_postprocessing(name, hyperparams, paths):
     n_old_walks = len(walk_ids)
 
     print(f"Adding edges between existing nodes... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    ol_len_cutoff = 0
-    if hyperparams['ol_len_cutoff'] == 50:
-        ol_len_cutoff = OL_LEN_CUTOFF_50
-    elif hyperparams['ol_len_cutoff'] == 75:
-        ol_len_cutoff = OL_LEN_CUTOFF_75
-    elif hyperparams['ol_len_cutoff'] == 90:
-        ol_len_cutoff = OL_LEN_CUTOFF_90
-
     valid_src, valid_dst, prefix_lens, ol_lens, ol_sims, ghost_data = paf_data['valid_src'], paf_data['valid_dst'], paf_data['prefix_len'], paf_data['ol_len'], paf_data['ol_similarity'], paf_data['ghost_data']
     added_edges_count = 0
     for i in range(len(valid_src)):
         src, dst, prefix_len, ol_len, ol_sim = valid_src[i], valid_dst[i], prefix_lens[i], ol_lens[i], ol_sims[i]
-        if ol_len < ol_len_cutoff: continue
         if src in n2n_end and dst in n2n_start:
             if n2n_end[src] == n2n_start[dst]: continue # ignore self-edges
             added_edges_count += 1
@@ -693,13 +698,11 @@ def paf_postprocessing(name, hyperparams, paths):
             for i, out_read_id in enumerate(data['outs']):
                 out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
                 if out_n_id not in n2n_start: continue
-                if data['ol_len_outs'][i] < ol_len_cutoff: continue
                 curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i]))
 
             for i, in_read_id in enumerate(data['ins']):
                 in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
                 if in_n_id not in n2n_end: continue
-                if data['ol_len_ins'][i] < ol_len_cutoff: continue
                 curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i]))
 
             # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
@@ -730,8 +733,71 @@ def paf_postprocessing(name, hyperparams, paths):
             n2s_ghost[n_id] = seq
             n_id += 1
             added_nodes_count += 1
-    print("Final number of nodes:", n_id)
+    print("Number of nodes added from PAF:", added_nodes_count)
 
+    print(f"Adding nodes from old graph... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    edges, edge_features = old_graph.edges(), old_graph.edata
+    graph_data = defaultdict(lambda: defaultdict(list))
+    for i in range(edges[0].shape[0]):
+        src_node = edges[0][i].item()  
+        dst_node = edges[1][i].item()  
+        ol_len = edge_features['overlap_length'][i].item()  
+        ol_sim = edge_features['overlap_similarity'][i].item()
+        prefix_len = edge_features['prefix_length'][i].item() 
+
+        if src_node not in nodes_in_old_walks:
+            graph_data[src_node]['outs'].append(dst_node)
+            graph_data[src_node]['ol_len_outs'].append(ol_len)
+            graph_data[src_node]['ol_sim_outs'].append(ol_sim)
+            graph_data[src_node]['prefix_len_outs'].append(prefix_len)
+
+        if dst_node not in nodes_in_old_walks:
+            graph_data[dst_node]['ins'].append(src_node)
+            graph_data[dst_node]['ol_len_ins'].append(ol_len)
+            graph_data[dst_node]['ol_sim_ins'].append(ol_sim)
+            graph_data[dst_node]['prefix_len_ins'].append(prefix_len)
+
+    # add to adj list where applicable
+    for old_node_id, data in graph_data.items():
+        curr_out_neighbours, curr_in_neighbours = set(), set()
+
+        for i, out_n_id in enumerate(data['outs']):
+            if out_n_id not in n2n_start: continue
+            curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_sim_outs'][i]))
+
+        for i, in_n_id in enumerate(data['ins']):
+            if in_n_id not in n2n_end: continue
+            curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_sim_ins'][i]))
+
+        if not curr_out_neighbours or not curr_in_neighbours: continue
+
+        for n in curr_out_neighbours:
+            adj_list.add_edge(Edge(
+                new_src_nid=n_id,
+                new_dst_nid=n2n_start[n[0]],
+                old_src_nid=None,
+                old_dst_nid=n[0],
+                prefix_len=n[1],
+                ol_len=n[2],
+                ol_sim=n[3]
+            ))
+        for n in curr_in_neighbours:
+            adj_list.add_edge(Edge(
+                new_src_nid=n2n_end[n[0]],
+                new_dst_nid=n_id,
+                old_src_nid=n[0],
+                old_dst_nid=None,
+                prefix_len=n[1],
+                ol_len=n[2],
+                ol_sim=n[3]
+            ))
+
+        seq = n2s[old_node_id]
+        n2s_ghost[n_id] = seq
+        n_id += 1
+        added_nodes_count += 1
+
+    print("Final number of nodes:", n_id)
     if not added_edges_count and not added_nodes_count:
         print("No suitable nodes and edges found to add to these walks. Returning...")
         return
@@ -798,8 +864,9 @@ def paf_postprocessing(name, hyperparams, paths):
                 
         adj_list.adj_list[new_src_nid] = set(n for n in dup_checker.values())
 
-    print(f"Removing cycles... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    adj_list = remove_cycles(adj_list)
+    # print(f"Removing cycles... (Time: {timedelta_to_str(datetime.now() - time_start)})")
+    # adj_list = remove_cycles(adj_list)
+    
     print("Final number of edges:", sum(len(x) for x in adj_list.adj_list.values()))
 
     print(f"Generating new walks... (Time: {timedelta_to_str(datetime.now() - time_start)})")
@@ -826,13 +893,13 @@ def paf_postprocessing(name, hyperparams, paths):
     return
 
 def run_paf_postprocessing(names, dataset, hyperparams):
-    ref = {}
-    for i in [1,3,5,9,12,18]:
-        ref[i] = [i for i in range(15)]
-    for i in [11,16,17,19,20]:
-        ref[i] = [i for i in range(5)]
-
     if dataset=="haploid_train":
+        ref = {}
+        for i in [1,3,5,9,12,18]:
+            ref[i] = [i for i in range(15)]
+        for i in [11,16,17,19,20]:
+            ref[i] = [i for i in range(5)]
+
         for chr in names:
             for i in ref[chr]:
                 name = f"chr{chr}_M_{i}"
@@ -844,7 +911,8 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                     'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
                     'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/train/{name}/",
                     'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/centromeres/chr{chr}_MATERNAL_centromere.fasta",
-                    'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"
+                    'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl",
+                    'seqtk_path':"../GitHub/seqtk/seqtk"
                 }
                 paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
     elif dataset=="haploid_test":
@@ -852,7 +920,9 @@ def run_paf_postprocessing(names, dataset, hyperparams):
             'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
             'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
             'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/mus_musculus/mmusculus_GRCm39.fna',
-            'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna'
+            'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna',
+            'maize-50p' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta',
+            'maize' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta'
         }
         for name in names:
             paths={
@@ -863,11 +933,11 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                 'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
                 'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name}/",
                 'ref_path':test_ref[name],
-                'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl"                
+                'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl",
+                'seqtk_path':"../GitHub/seqtk/seqtk"              
             }
             paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
-    elif dataset=="diploid":
-        for name in names:
+    elif dataset=="diploid_train":
             name1 = f"hg002_v101_chr{name}_0"
             for v in ['m', 'p']:
                 name2 = f"chr_{name}_synth_{v}"
@@ -880,44 +950,65 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                     'r2n_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/read_to_node/{name1}.pkl",
                     'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
                     'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/chromosomes/{name3}",
-                    'graph_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/dgl_graphs/{name1}.dgl"                    
+                    'graph_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/hifiasm_dataset/dgl_graphs/{name1}.dgl",
+                    'seqtk_path':"../GitHub/seqtk/seqtk"               
+                }
+                paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
+    elif dataset=="diploid_test":
+        for name in names:
+            c_path = f"/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/{name}"
+            for v in ['m', 'p']:
+                name2 = None
+                name3 = None
+                paths = {
+                    'walks_path':f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name2}/walks.pkl",
+                    'fasta_path':f"{c_path}/full_reads/{name}_full_0.pkl",
+                    'paf_path':f'{c_path}/paf/{name1}_full_0.pkl',
+                    'n2s_path':f"{c_path}/reduced_reads/{name1}_full_0.pkl", 
+                    'r2n_path':f"{c_path}/read_to_node/{name1}_full_0.pkl",
+                    'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
+                    'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/chromosomes/{name3}",
+                    'graph_path':f"{c_path}/dgl_graphs/{name1}_full_0.dgl",
+                    'seqtk_path':"../GitHub/seqtk/seqtk"               
                 }
                 paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, or diploid")
+    parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, diploid_train, or diploid_test")
     parser.add_argument("--walk_valid_p", type=float, default=0.02)
-    parser.add_argument("--chop_walk_buffer", type=int, default=10)
-    parser.add_argument("--ol_len_cutoff", type=int, default=0, help="50, 75, or 90")
     parser.add_argument("--dfs_penalty", type=str, default=None, help="ol_len or ol_sim, leave blank for no penalty")
     parser.add_argument("--walk_var", type=str, default='default', help="default or telomere")
+    parser.add_argument("--use_telomere_info", type=lambda x: (str(x).lower() == 'true'), default=True, help="To use telomere information or not")
     args = parser.parse_args()
     dataset = args.dataset
     hyperparams = {
-        'chop_walk_min_count_ref' : {
-            'arab' : 400,
-            'chicken' : 1000,
-            'mouse' : 500,
-            'chm13' : 175
+        'telo_motif_ref' : {
+            'arab' : ("TTTAGGG", "CCCTAAA"),
+            'chicken' : ("TTAGGG", "CCCTAA"),
+            'mouse' : ("TTAGGG", "CCCTAA"),
+            'chm13' : ("TTAGGG", "CCCTAA"),
+            'maize-50p' : ("TTTAGGG", "CCCTAAA"),
+            'maize' : ("TTTAGGG", "CCCTAAA")
         },
         'walk_valid_p' : args.walk_valid_p,
-        'chop_walk_buffer' : args.chop_walk_buffer,
-        'ol_len_cutoff' : args.ol_len_cutoff,
         'dfs_penalty' : args.dfs_penalty,
-        'walk_var' : args.walk_var
+        'walk_var' : args.walk_var,
+        'use_telomere_info' : args.use_telomere_info
     }
 
     if dataset == "haploid_train":
         names = [1,3,5,9,11,12,16,17,18,19,20]
     elif dataset == "haploid_test":
-        names = ["arab", "chicken", "mouse", "chm13"]
-    elif dataset == "diploid":
+        names = ["arab", "chicken", "maize-50p", "chm13", "mouse", "maize"]
+    elif dataset == "diploid_train":
         names = [10,1,5,18,19]
+    elif dataset == "diploid_test":
+        names = ["hg002"]
 
     # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
-    for names in [["mouse"], ["arab"], ["chicken"], ["chm13"]]:
-        for walk_var in ["telomere", "default"]:
+    for names in [["maize"]]:
+        for walk_var in ["default", "telomere"]:
             hyperparams["walk_var"] = walk_var
             run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
