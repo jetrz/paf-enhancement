@@ -111,19 +111,25 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
     for row in seqtk_res_rep1:
         row_split = row.split("\t")
         walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+        c_seq = old_contigs[walk_id][start:end]
+        rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+        c_rep = rep1 if rep1_count > rep2_count else rep2
         start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
         if start_node in telo_info[walk_id]:
             print("Duplicate telomere region found 1!")
         else:
-            telo_info[walk_id][start_node] = (end_node, rep1)
+            telo_info[walk_id][start_node] = (end_node, c_rep)
     for row in seqtk_res_rep2:
         row_split = row.split("\t")
         walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+        c_seq = old_contigs[walk_id][start:end]
+        rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+        c_rep = rep1 if rep1_count > rep2_count else rep2
         start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
         if start_node in telo_info[walk_id]:
             print("Duplicate telomere region found 2!")
         else:
-            telo_info[walk_id][start_node] = (end_node, rep2)
+            telo_info[walk_id][start_node] = (end_node, c_rep)
     os.remove('temp.fasta')
 
     # Chop walks
@@ -149,7 +155,7 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
                             'end' : '+' if curr_telo == rep1 else '-'
                         }
                         curr_walk, curr_telo = [], None
-                elif curr_telo != telo_type: # The newly found telo type does not match the current walk's telo type. Should be chopped immediately.
+                elif curr_telo == telo_type: # The newly found telo type matches the current walk's telo type. Should be chopped immediately.
                     new_walks.append(curr_walk.copy())
                     telo_ref[len(new_walks)-1] = {
                         'start' : '+' if curr_telo == rep1 else '-',
@@ -161,7 +167,7 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
                         curr_walk.append(curr_node)
                         curr_ind += 1
                         if curr_node == end_node: break
-                else: # The newly found telo type matches the current walk's telo type. Add the telomeric region, then chop the walk.
+                else: # The newly found telo type does not match the current walk's telo type. Add the telomeric region, then chop the walk.
                     while True:
                         curr_node = walk[curr_ind]
                         curr_walk.append(curr_node)
@@ -203,65 +209,6 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
     print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}, n +ve telomeric regions: {rep1_count}, n -ve telomeric regions: {rep2_count}")
     return new_walks, telo_ref
 
-# def remove_cycles(adj_list):
-#     """
-#     Remove cycles from the graph. In each cycle, the edge with the lowest overlap_length is removed.
-#     """
-#     cycle_edges, edges_removed = [], 0
-
-#     def dfs(node, visited, rec_stack):
-#         nonlocal cycle_edges
-#         # print("dfs called. node:", node, "visited:", visited, "rec_stack", rec_stack, "cycle_edges", cycle_edges)
-#         visited.add(node)
-#         rec_stack.add(node)
-        
-#         # Traverse all neighbors
-#         for neighbor in adj_list.get_neighbours(node):
-#             if neighbor.new_dst_nid not in visited:
-#                 res, cycle_start = dfs(neighbor.new_dst_nid, visited, rec_stack)
-#                 if res:
-#                     if cycle_start != None:
-#                         cycle_edges.append(neighbor)
-#                         if node == cycle_start: cycle_start = None 
-#                     return True, cycle_start
-#             elif neighbor.new_dst_nid in rec_stack:
-#                 # Found a cycle, store the edge
-#                 cycle_edges.append(neighbor)
-#                 return True, neighbor.new_dst_nid
-
-#         rec_stack.remove(node)
-#         return False, None
-
-#     def detect_cycles():
-#         visited, rec_stack = set(), set()
-#         nonlocal cycle_edges
-#         cycle_edges = []
-        
-#         for node in adj_list.adj_list.keys():
-#             if node not in visited:
-#                 res, _ = dfs(node, visited, rec_stack)
-#                 if res: break
-
-#     def remove_min_similarity_edge():
-#         nonlocal cycle_edges, edges_removed
-#         # Find the edge with the minimum overlap_similarity
-#         if not cycle_edges:
-#             return False  # No cycle found
-        
-#         min_edge = min(cycle_edges, key=lambda edge: edge.ol_len)
-#         adj_list.remove_edge(min_edge)
-#         edges_removed += 1
-#         return True
-
-#     # Keep detecting and removing cycles until none remain
-#     while True:
-#         detect_cycles()
-#         if not remove_min_similarity_edge():
-#             break
-
-#     print("Edges removed to break cycles:", edges_removed)
-#     return adj_list
-
 def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, memo_chances=50, visited_init=set()):
     # Dictionary to memoize the longest walk from each node
     memo, memo_counts = {}, defaultdict(int)
@@ -279,7 +226,7 @@ def get_best_walk(adj_list, start_node, n_old_walks, telo_ref, penalty=None, mem
     def check_telo_compatibility(t1, t2):
         if t1 is None or t2 is None:
             return True
-        elif t1[0] != t2[0] and t1[1] == t2[1]: # The position must be different, but motif var must be the same.
+        elif t1[0] != t2[0] and t1[1] != t2[1]: # The position must be different, and motif var must be different.
             return True
         else:
             return False
@@ -958,17 +905,17 @@ def run_paf_postprocessing(names, dataset, hyperparams):
         for name in names:
             c_path = f"/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/{name}"
             for v in ['m', 'p']:
-                name2 = None
-                name3 = None
+                name2 = f"{name}_fr_model_{v}"
+                name3 = f"{name}v1.0.1_MATERNAL.fasta" if v == "m" else f"{name}v1.0.1_PATERNAL.fasta"
                 paths = {
                     'walks_path':f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name2}/walks.pkl",
                     'fasta_path':f"{c_path}/full_reads/{name}_full_0.pkl",
-                    'paf_path':f'{c_path}/paf/{name1}_full_0.pkl',
-                    'n2s_path':f"{c_path}/reduced_reads/{name1}_full_0.pkl", 
-                    'r2n_path':f"{c_path}/read_to_node/{name1}_full_0.pkl",
+                    'paf_path':f'{c_path}/paf/{name}_full_0.pkl',
+                    'n2s_path':f"{c_path}/reduced_reads/{name}_full_0.pkl", 
+                    'r2n_path':f"{c_path}/read_to_node/{name}_full_0.pkl",
                     'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
-                    'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/chromosomes/{name3}",
-                    'graph_path':f"{c_path}/dgl_graphs/{name1}_full_0.dgl",
+                    'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/{name3}",
+                    'graph_path':f"{c_path}/dgl_graphs/{name}_full_0.dgl",
                     'seqtk_path':"../GitHub/seqtk/seqtk"               
                 }
                 paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
@@ -978,7 +925,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default='haploid_train', help="haploid_train, haploid_test, diploid_train, or diploid_test")
     parser.add_argument("--walk_valid_p", type=float, default=0.02)
     parser.add_argument("--dfs_penalty", type=str, default=None, help="ol_len or ol_sim, leave blank for no penalty")
-    parser.add_argument("--walk_var", type=str, default='default', help="default or telomere")
+    parser.add_argument("--walk_var", type=str, default='telomere', help="default or telomere")
     parser.add_argument("--use_telomere_info", type=lambda x: (str(x).lower() == 'true'), default=True, help="To use telomere information or not")
     args = parser.parse_args()
     dataset = args.dataset
@@ -989,7 +936,9 @@ if __name__ == "__main__":
             'mouse' : ("TTAGGG", "CCCTAA"),
             'chm13' : ("TTAGGG", "CCCTAA"),
             'maize-50p' : ("TTTAGGG", "CCCTAAA"),
-            'maize' : ("TTTAGGG", "CCCTAAA")
+            'maize' : ("TTTAGGG", "CCCTAAA"),
+            'hg002_fr_model_m' : ("TTAGGG", "CCCTAA"),
+            'hg002_fr_model_p' : ("TTAGGG", "CCCTAA")
         },
         'walk_valid_p' : args.walk_valid_p,
         'dfs_penalty' : args.dfs_penalty,
@@ -1000,15 +949,15 @@ if __name__ == "__main__":
     if dataset == "haploid_train":
         names = [1,3,5,9,11,12,16,17,18,19,20]
     elif dataset == "haploid_test":
-        names = ["arab", "chicken", "maize-50p", "chm13", "mouse", "maize"]
+        names = ["maize-50p", "chm13", "maize", "mouse", "chicken", "arab"]
     elif dataset == "diploid_train":
         names = [10,1,5,18,19]
     elif dataset == "diploid_test":
         names = ["hg002"]
 
-    # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
+    run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
-    for names in [["maize"]]:
-        for walk_var in ["default", "telomere"]:
-            hyperparams["walk_var"] = walk_var
-            run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
+    # for names in [["maize-50p"], ["chm13"], ["maize"], ["chicken"], ["mouse"], ["arab"]]:
+    #     for walk_valid_p in [0.0025, 0.001]:
+    #         hyperparams["walk_valid_p"] = walk_valid_p
+    #         run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)

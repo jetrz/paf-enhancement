@@ -686,7 +686,7 @@ def run_quast(name, type):
     # print(cmd)
     subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-# for n in ['chm13', 'maize-50p']:
+# for n in ['mouse', 'maize']:
 #     run_quast(n, 'postprocessed')
 
 def run_compleasm(name, type):
@@ -699,5 +699,21 @@ def run_compleasm(name, type):
     # print(cmd)
     subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-for n in ['arab', 'chicken', 'chm13', 'maize-50p']:
-    run_compleasm(n, 'postprocessed')
+# for n in ['mouse', 'maize']:
+#     run_compleasm(n, 'postprocessed')
+
+def read_fasta(path, regions):
+    with open(path, 'rt') as handle:
+        rows = SeqIO.parse(handle, 'fasta')
+        for row in rows:
+            seq = str(row.seq)
+            print("len_seq:", len(seq))
+            for region in regions:
+                print("Region:", region)
+                c_seq = seq[region[0]:region[1]]
+                print("TTAGGG count:", c_seq.count("TTAGGG"), "CCCTAA count:", c_seq.count("CCCTAA"))
+
+read_fasta(
+    '/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/chromosomes/chr2_M.fasta',
+    [[0, 2479], [242112456, 242114530]]
+)
