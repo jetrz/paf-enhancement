@@ -546,60 +546,47 @@ def analyse_telomeres_99():
 
 # analyse_telomeres_99()
 
-# from decoding_paf import AdjList, Edge, remove_cycles
-# def test_cycle_removal():
-#     adj_list = AdjList()
-#     for i in range(5):
-#         adj_list.add_edge(Edge(
-#             new_src_nid=i,
-#             new_dst_nid=(i+1)%5,
-#             old_src_nid=None,
-#             old_dst_nid=None,
-#             prefix_len=0,
-#             ol_len=i,
-#             ol_sim=0
-#         ))
+def telomere_extraction(name, fasta_path, seqtk_path='../GitHub/seqtk/seqtk'):
+    print(f"\n=== RUNNING TELOMERE EXTRACTION FOR {name} ===\n")
+    read_to_seq = {}
+    with open(fasta_path, 'rt') as handle:
+        rows = SeqIO.parse(handle, 'fasta')
+        for row in rows:
+            id, seq = row.description.split()[0], str(row.seq)
+            read_to_seq[id] = seq
 
-#     print("adj_list start:", adj_list)
-#     adj_list = remove_cycles(adj_list)
-#     print("adj_list_after:", adj_list)
-
-# test_cycle_removal()
-
-def telomere_extraction(name, walks_fasta_path, seqtk_path='../GitHub/seqtk/seqtk'):
     if name in ["maize", "maize-50p", "arab"]:
         rep1, rep2 = 'TTTAGGG', 'CCCTAAA'
     else:
         rep1, rep2 = 'TTAGGG', 'CCCTAA'
-    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} {walks_fasta_path}"
-    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} {walks_fasta_path}"
+    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} {fasta_path}"
+    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} {fasta_path}"
     seqtk_res_rep1 = subprocess.run(seqtk_cmd_rep1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     seqtk_res_rep2 = subprocess.run(seqtk_cmd_rep2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     seqtk_res_rep1 = seqtk_res_rep1.stdout.split("\n"); seqtk_res_rep1.pop()
     seqtk_res_rep2 = seqtk_res_rep2.stdout.split("\n"); seqtk_res_rep2.pop()
-    telo_info = defaultdict(dict)
-
-    print(f"=== RUNNING FOR {name} ===")
-    print("seqtk_res_rep1:", seqtk_res_rep1)
-    print("seqtk_res_rep2:", seqtk_res_rep2)
+    
+    n_rep1, n_rep2 = 0, 0
     for row in seqtk_res_rep1:
         row_split = row.split("\t")
-        walk_id, start, end = int(row_split[0].split("_")[1]), int(row_split[1]), int(row_split[2])
-        if start in telo_info[walk_id]:
-            print("Duplicate telomere region found 1!")
+        walk_id, start, end = row_split[0], int(row_split[1]), int(row_split[2])-1
+        c_seq = read_to_seq[walk_id][start:end]
+        rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+        if rep1_count > rep2_count: 
+            n_rep1 += 1
         else:
-            telo_info[walk_id][start] = end
+            n_rep2 += 1
     for row in seqtk_res_rep2:
         row_split = row.split("\t")
-        walk_id, start, end = int(row_split[0].split("_")[1]), int(row_split[1]), int(row_split[2])
-        if start in telo_info[walk_id]:
-            print("Duplicate telomere region found 2!")
+        walk_id, start, end = row_split[0], int(row_split[1]), int(row_split[2])-1
+        c_seq = read_to_seq[walk_id][start:end]
+        rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+        if rep1_count > rep2_count: 
+            n_rep1 += 1
         else:
-            telo_info[walk_id][start] = end
-    
-# for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
-#     walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
-#     telomere_extraction(n, walks_fasta_path)
+            n_rep2 += 1
+
+    print(f"telomere extraction done. n_rep1: {n_rep1}, n_rep2: {n_rep2}")
 
 def test_are_walks_order_the_same(name):
     print(f"=== CHECKING FOR {name} ===")
@@ -621,25 +608,6 @@ def test_are_walks_order_the_same(name):
 
     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl", 'rb') as f:
         walks = pickle.load(f)
-        # for z, walk in enumerate(walks):
-        #     curr_pos, curr_fasta_seq = 0, fasta_seqs[z]
-        #     for idx, node in enumerate(walk):
-        #         # Preprocess the sequence
-        #         c_seq = str(n2s[node])
-        #         if idx != len(walk)-1:
-        #             c_prefix = graph.edata['prefix_length'][edges_full[node,walk[idx+1]]]
-        #             c_seq = c_seq[:c_prefix]
-                
-        #         c_len_seq = len(c_seq)
-        #         if curr_pos+c_len_seq <= len(curr_fasta_seq):
-        #             curr_fasta_seq_seg = curr_fasta_seq[curr_pos:curr_pos+c_len_seq]
-        #             if c_seq != curr_fasta_seq_seg:
-        #                 print(f"In walk {z}, node {idx} out of {len(walk)-1} nodes. Sequences do not match!")
-        #         else:
-        #             print(f"In walk {z}, node {idx} out of {len(walk)-1} nodes. Ran out of length in fasta seq.")
-        #         curr_pos += c_len_seq
-
-
         for i, walk in enumerate(walks):
             prefixes = [(src, graph.edata['prefix_length'][edges_full[src,dst]]) for src, dst in zip(walk[:-1], walk[1:])]
 
@@ -702,18 +670,7 @@ def run_compleasm(name, type):
 # for n in ['mouse', 'maize']:
 #     run_compleasm(n, 'postprocessed')
 
-def read_fasta(path, regions):
-    with open(path, 'rt') as handle:
-        rows = SeqIO.parse(handle, 'fasta')
-        for row in rows:
-            seq = str(row.seq)
-            print("len_seq:", len(seq))
-            for region in regions:
-                print("Region:", region)
-                c_seq = seq[region[0]:region[1]]
-                print("TTAGGG count:", c_seq.count("TTAGGG"), "CCCTAA count:", c_seq.count("CCCTAA"))
-
-read_fasta(
-    '/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/chromosomes/chr2_M.fasta',
-    [[0, 2479], [242112456, 242114530]]
-)
+if __name__ == "__main__":
+    for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
+        # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
+        telomere_extraction(n, HAPLOID_TEST_REF[n])

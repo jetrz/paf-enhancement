@@ -1,10 +1,9 @@
-import argparse, dgl, math, os, pickle, subprocess
+import argparse, dgl, math, os, pickle, random, subprocess
 from Bio import Seq, SeqIO
 from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 # For telomere operations
 REP1_DEFAULT, REP2_DEFAULT = 'TTAGGG', 'CCCTAA' # Repetitive regions used for identifying telomeric sequences
@@ -95,14 +94,15 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
             curr_pos += c_len_seq
         old_contigs.append(seq)
     
-    with open('temp.fasta', 'w') as f:
+    temp_fasta_name = f'temp_{random.randint(1,9999999)}.fasta'
+    with open(temp_fasta_name, 'w') as f:
         for i, contig in enumerate(old_contigs):
             f.write(f'>{i}\n')  # Using index as ID
             f.write(f'{contig}\n')
 
     # Use seqtk to get telomeric regions
-    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} temp.fasta"
-    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} temp.fasta"
+    seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} {temp_fasta_name}"
+    seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} {temp_fasta_name}"
     seqtk_res_rep1 = subprocess.run(seqtk_cmd_rep1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     seqtk_res_rep2 = subprocess.run(seqtk_cmd_rep2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     seqtk_res_rep1 = seqtk_res_rep1.stdout.split("\n"); seqtk_res_rep1.pop()
@@ -130,7 +130,7 @@ def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
             print("Duplicate telomere region found 2!")
         else:
             telo_info[walk_id][start_node] = (end_node, c_rep)
-    os.remove('temp.fasta')
+    os.remove(temp_fasta_name)
 
     # Chop walks
     new_walks, telo_ref = [], {}
@@ -810,9 +810,6 @@ def paf_postprocessing(name, hyperparams, paths):
                     raise ValueError("Duplicate edge between two non-walks found!")
                 
         adj_list.adj_list[new_src_nid] = set(n for n in dup_checker.values())
-
-    # print(f"Removing cycles... (Time: {timedelta_to_str(datetime.now() - time_start)})")
-    # adj_list = remove_cycles(adj_list)
     
     print("Final number of edges:", sum(len(x) for x in adj_list.adj_list.values()))
 
@@ -840,6 +837,15 @@ def paf_postprocessing(name, hyperparams, paths):
     return
 
 def run_paf_postprocessing(names, dataset, hyperparams):
+    haploid_test_ref = {
+        'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
+        'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
+        'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/mus_musculus/mmusculus_GRCm39.fna',
+        'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna',
+        'maize-50p' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta',
+        'maize' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta'
+    }
+    
     if dataset=="haploid_train":
         ref = {}
         for i in [1,3,5,9,12,18]:
@@ -863,14 +869,6 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                 }
                 paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
     elif dataset=="haploid_test":
-        test_ref = {
-            'chm13' : '/mnt/sod2-project/csb4/wgs/martin/genome_references/chm13_v11/chm13_full_v1_1.fasta',
-            'arab' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta',
-            'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/mus_musculus/mmusculus_GRCm39.fna',
-            'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/bGalGal1/maternal/GCF_016699485.2_bGalGal1.mat.broiler.GRCg7b_genomic.fna',
-            'maize-50p' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta',
-            'maize' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta'
-        }
         for name in names:
             paths={
                 'walks_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{name}/walks.pkl",
@@ -879,11 +877,32 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                 'n2s_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
                 'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
                 'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name}/",
-                'ref_path':test_ref[name],
+                'ref_path':haploid_test_ref[name],
                 'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl",
                 'seqtk_path':"../GitHub/seqtk/seqtk"              
             }
             paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
+    elif dataset == "haploid_test_seeds":
+        walks_path_ref = {
+            'arab' : 'arabidopsis_p022_l0/decode/0_walks.pkl',
+            'chicken' : 'bGalGal1_maternal_0.5_30x/decode/0_walks.pkl',
+            'mouse' : 'mus_musculus/decode/0_walks.pkl',
+            'chm13' : 'full_chm13/decode/0_walks.pkl'
+        }
+        for name in names:
+            for seed in range(6):
+                paths={
+                    'walks_path':f"/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/BEST_ARCH_RESULTS/23-08-21_60xMASK-symloss_h64_drop020_seed{seed}/{walks_path_ref[name]}",
+                    'fasta_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl",
+                    'paf_path':f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_paf_data.pkl',
+                    'n2s_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_n2s.pkl",
+                    'r2n_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl",
+                    'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name}/",
+                    'ref_path':haploid_test_ref[name],
+                    'graph_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl",
+                    'seqtk_path':"../GitHub/seqtk/seqtk"              
+                }
+                paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
     elif dataset=="diploid_train":
             name1 = f"hg002_v101_chr{name}_0"
             for v in ['m', 'p']:
@@ -950,14 +969,23 @@ if __name__ == "__main__":
         names = [1,3,5,9,11,12,16,17,18,19,20]
     elif dataset == "haploid_test":
         names = ["maize-50p", "chm13", "maize", "mouse", "chicken", "arab"]
+    elif dataset == "haploid_test_seeds":
+        names = ["arab", "chicken", "mouse", "chm13"]
     elif dataset == "diploid_train":
         names = [10,1,5,18,19]
     elif dataset == "diploid_test":
         names = ["hg002"]
 
-    run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
+    # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
-    # for names in [["maize-50p"], ["chm13"], ["maize"], ["chicken"], ["mouse"], ["arab"]]:
-    #     for walk_valid_p in [0.0025, 0.001]:
-    #         hyperparams["walk_valid_p"] = walk_valid_p
-    #         run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
+    # hyperparams["walk_valid_p"] = 0.01
+    # for names in [["arab"], ["chicken"], ["mouse"]]:
+    #     run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
+    # hyperparams["walk_valid_p"] = 0.001
+    # for names in [["chm13"], ["maize"], ["maize-50p"]]:
+    #     run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
+
+    hyperparams["walk_valid_p"] = 0.01
+    run_paf_postprocessing(["arab", "chicken", "mouse"], dataset="haploid_test_seeds", hyperparams=hyperparams)
+    hyperparams["walk_valid_p"] = 0.001
+    run_paf_postprocessing(["chm13"], dataset="haploid_test_seeds", hyperparams=hyperparams)
