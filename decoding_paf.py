@@ -839,9 +839,15 @@ def asm_metrics(contigs, save_path, ref_path):
 
 def paf_postprocessing(name, hyperparams, paths):
     """
-    Postprocesses walks from original pipeline to connect them with ghost data.
-    *IMPORTANT
-    - Only uses information from ghost-1 now. Any two walks are at most connected by a single ghost node. Also, all added ghost nodes must have at least one incoming and one outgoing edge to a walk.
+    Performs scaffolding on GNNome's walks using information from PAF, GFA, and telomeres.
+    Currently, only uses info from 1-hop neighbourhood of original graph. Any two walks are at most connected by a single ghost node. Also, all added ghost nodes must have at least one incoming and one outgoing edge to a walk.
+    
+    Summary of the pipeline (details can be found in the respective functions):
+    1. Loads the relevant files.
+    2. Generates telomere information, then chops walks accordingly.
+    3. Compresses each GNNome walk into a single node, then adds 'ghost' nodes and edges using information from PAF and GFA.
+    4. Decodes the new sequences using DFS and telomere information.
+    5. Regenerates contigs and calculates metrics.
     """
     time_start = datetime.now()
 
