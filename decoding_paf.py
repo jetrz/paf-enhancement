@@ -1064,7 +1064,9 @@ if __name__ == "__main__":
     # for names in [["chm13"], ["maize"], ["maize-50p"]]:
     #     run_paf_postprocessing(names, dataset="haploid_test", hyperparams=hyperparams)
 
-    hyperparams["walk_valid_p"] = 0.01
-    run_paf_postprocessing(["arab", "chicken", "mouse"], dataset="haploid_test_seeds", hyperparams=hyperparams)
-    hyperparams["walk_valid_p"] = 0.001
-    run_paf_postprocessing(["chm13"], dataset="haploid_test_seeds", hyperparams=hyperparams)
+    # hyperparams["walk_valid_p"] = 0.005
+    # run_paf_postprocessing(["mouse"], dataset="haploid_test_seeds", hyperparams=hyperparams)
+    # hyperparams["walk_valid_p"] = 0.0005
+    # run_paf_postprocessing(["chm13"], dataset="haploid_test_seeds", hyperparams=hyperparams)
+
+    run_paf_postprocessing(["chicken"], dataset="haploid_test", hyperparams=hyperparams)

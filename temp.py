@@ -670,7 +670,89 @@ def run_compleasm(name, type):
 # for n in ['mouse', 'maize']:
 #     run_compleasm(n, 'postprocessed')
 
+def read_seed_minigraphs(names):
+    for n in names:
+        for seed in range(6):
+            print(f"\n=== {n}, seed {seed} ===")
+            file_name = "0_minigraph_latest.txt" if n == "arabidopsis_p022_l0" else "0_minigraph.txt"
+            with open(f'/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/BEST_ARCH_RESULTS/23-08-21_60xMASK-symloss_h64_drop020_seed{seed}/{n}/reports/{file_name}') as f:
+                report = f.read()
+                print(report)
+
+def compare_gfas(name):
+    print(f"=== RUNNING FOR {name} ===")
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/default_{name}_r2n.pkl", 'rb') as f:
+        r2n = pickle.load(f)
+    graph = dgl.load_graphs(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/default/{name}.dgl")[0][0]
+    
+    prefix_len_mapping = {}
+    for idx, (src, dst) in enumerate(zip(graph.edges()[0], graph.edges()[1])):
+        # print(src, dst)
+        prefix_len_mapping[(src.item(), dst.item())] = int(graph.edata['prefix_length'][idx].item())
+
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{name}.bp.p_ctg.gfa") as f:
+        rows = f.readlines()
+
+        contigs = defaultdict(list)
+        for i, row in enumerate(rows):
+            row = row.strip().split()
+            if row[0] != "A": continue
+            contigs[row[1]].append(row)
+
+    missing_nodes, missing_edges = set(), set()
+    base_mismatch_count, base_mismatch_abs = 0, 0
+    for contig, reads in contigs.items():
+        reads = sorted(reads, key=lambda x:int(x[2]))
+        # print(reads)
+        for i in range(len(reads)-1):
+            curr, next = reads[i], reads[i+1]
+        
+            if next[4] not in r2n or curr[4] not in r2n:
+                if curr[4] not in r2n:
+                    missing_nodes.add(curr[4])
+                if next[4] not in r2n:
+                    missing_nodes.add(next[4])
+                missing_edges.add((curr[4], next[4]))
+                continue
+
+            src_node = r2n[curr[4]][0] if curr[3] == "+" else r2n[curr[4]][1]
+            dst_node = r2n[next[4]][0] if next[3] == "+" else r2n[next[4]][1]
+        if (src_node, dst_node) not in prefix_len_mapping:
+            missing_edges.add((curr[4], next[4]))
+        else:
+            curr_prefix = int(next[2])-int(curr[2])
+            if curr_prefix != prefix_len_mapping[(src_node, dst_node)]:
+                base_mismatch_count += 1
+                base_mismatch_abs += abs(prefix_len_mapping[(src_node, dst_node)]-curr_prefix)
+                # print(f"Prefix length mismatch found! Old: {prefix_len_mapping[(src_node, dst_node)]}, New: {curr_prefix}")
+
+    print(f"Finish parsing new GFA. N Contigs: {len(contigs)}, Missing nodes: {len(missing_nodes)}, Missing edges: {len(missing_edges)}, Base Mismatch: {base_mismatch_abs/base_mismatch_count}")
+
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{name}.ovlp.paf") as f:
+        rows = f.readlines()
+        for i, row in tqdm(enumerate(rows), ncols=120):
+            row = row.strip().split()
+            missing_edges.discard((row[0], row[5]))
+            if not missing_edges: break
+
+    if missing_edges:
+        print("Number of missing edges after PAF:", len(missing_edges))
+        count = 0
+        for e in missing_edges:
+            if e[0] in missing_nodes or e[1] in missing_nodes:
+                count += 1
+        print("Number with a missing node:", count)
+    else:
+        print("All missing edges found!")
+
+            
+
 if __name__ == "__main__":
-    for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
-        # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
-        telomere_extraction(n, HAPLOID_TEST_REF[n])
+    # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
+    #     # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
+    #     telomere_extraction(n, HAPLOID_TEST_REF[n])
+
+    # read_seed_minigraphs(["arabidopsis_p022_l0", "bGalGal1_maternal_0.5_30x", "mus_musculus", "full_chm13"])
+
+    for n in ['arab']:
+        compare_gfas(n)
