@@ -882,4 +882,3 @@ if __name__ == "__main__":
         save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
         name="bonobo"
     )
-    '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/hg002/maternal/hg002_yak_M.fasta'

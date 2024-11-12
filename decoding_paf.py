@@ -1019,15 +1019,16 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                 paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
     elif dataset=="misc":
         for name in names:
+            ref_file = "chr18_M.fasta" if name == "chr18hap10_m" else "chr18_P.fasta"
             paths = {
                 'walks_path':f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name}/walks.pkl",
                 'fasta_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/full_reads/i002c_v04_chr18_0.pkl",
-                'paf_path':f'{c_path}/paf/{name}_full_0.pkl',
-                'n2s_path':f"{c_path}/reduced_reads/{name}_full_0.pkl", 
-                'r2n_path':f"{c_path}/read_to_node/{name}_full_0.pkl",
-                'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
-                'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/{name3}",
-                'graph_path':f"{c_path}/dgl_graphs/{name}_full_0.dgl",
+                'paf_path':f'/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/paf/i002c_v04_chr18_0.pkl',
+                'n2s_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/reduced_reads/i002c_v04_chr18_0.pkl", 
+                'r2n_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/read_to_node/i002c_v04_chr18_0.pkl",
+                'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/temp/{name}/",
+                'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/i002c_v04/chromosomes/{ref_file}",
+                'graph_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/dgl_graphs/i002c_v04_chr18_0.dgl",
                 'seqtk_path':"../GitHub/seqtk/seqtk"               
             }
             paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
