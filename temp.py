@@ -1,4 +1,4 @@
-import dgl, gzip, os, pickle, random, subprocess
+import dgl, gc, gzip, os, pickle, random, subprocess
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
@@ -692,7 +692,6 @@ def compare_gfas(name):
 
     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{name}.bp.p_ctg.gfa") as f:
         rows = f.readlines()
-
         contigs = defaultdict(list)
         for i, row in enumerate(rows):
             row = row.strip().split()
@@ -745,7 +744,125 @@ def compare_gfas(name):
     else:
         print("All missing edges found!")
 
-            
+from difflib import SequenceMatcher
+
+def assemble_hifi_gfa(name):
+    def find_most_similar(target, string_set):
+        most_similar = None
+        highest_similarity = 0
+
+        for s in string_set:
+            similarity = SequenceMatcher(None, target, s).ratio()
+            if similarity > highest_similarity:
+                highest_similarity = similarity
+                most_similar = s
+
+        return most_similar, highest_similarity
+
+
+    print(f"=== RUNNING FOR {name} ===")
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/pkl/{name}_fasta_data.pkl", 'rb') as f:
+        fasta_data = pickle.load(f)
+
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{name}.bp.p_ctg.gfa") as f:
+        rows = f.readlines()
+        contigs = defaultdict(list)
+        for i, row in enumerate(rows):
+            row = row.strip().split()
+            if row[0] != "A": continue
+            contigs[row[1]].append(row)
+
+    hifi_gfa_seqs = set()
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/datasets/{name}.p_ctg.fa", 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        for i, record in enumerate(tqdm(rows, ncols=120)):
+            seq = str(record.seq)
+            hifi_gfa_seqs.add(seq)
+
+    assembled_seqs = set()
+    for contig, reads in contigs.items():
+        reads = sorted(reads, key=lambda x:int(x[2]))
+        # print(reads)
+        cs = ""
+        for i in range(len(reads)-1):
+            curr, next = reads[i], reads[i+1]
+
+            curr_prefix = int(next[2])-int(curr[2])
+            curr_seq = fasta_data[curr[4]][0] if curr[3] == '+' else fasta_data[curr[4]][1]
+            curr_seq = curr_seq[int(curr[5]):int(curr[6])]
+            cs += curr_seq[:curr_prefix+1]
+        
+        curr = reads[-1]
+        curr_seq = fasta_data[curr[4]][0] if curr[3] == '+' else fasta_data[curr[4]][1]
+        curr_seq = curr_seq[int(curr[5]):int(curr[6])]
+        cs += curr_seq
+        assembled_seqs.add(cs)
+
+    for i in assembled_seqs:
+        most_similar, highest_similarity = find_most_similar(i, hifi_gfa_seqs)
+        print("length assembled seq:", len(i), "length hifi seq:", len(most_similar), "similarity:", highest_similarity)
+
+    print(len(hifi_gfa_seqs), len(assembled_seqs))
+    unique_in_set1 = hifi_gfa_seqs.difference(assembled_seqs)
+    print("Len Unique in Set 1:", len(unique_in_set1))
+
+def find_dupes_in_gfa():
+    with open("/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.bp.p_ctg.gfa") as f:
+        rows = f.readlines()
+
+    contigs = defaultdict(list)
+    for row in rows:
+        row = row.strip().split()
+        if row[0] != "A": continue
+        contigs[row[1]].append(row)
+
+    edges = set()
+    for contig, reads in contigs.items():
+        reads = sorted(reads, key=lambda x:int(x[2])) # sort by order in contig
+        for i in range(len(reads)-1):
+            curr_row, next_row = reads[i], reads[i+1]
+            curr_edge = (curr_row[4], next_row[4])
+            if curr_edge in edges:
+                print("duplicate found!")
+            else:
+                edges.add(curr_edge)
+
+def split_fasta(yak_path, reads_path, save_path, name):
+    r2t = {}
+    with open(yak_path) as f:
+        rows = f.readlines()
+        for row in rows:
+            row = row.strip().split()
+            if row[1] == 'm':
+                r2t[row[0]] = 'm'
+            elif row[1] == 'p':
+                r2t[row[0]] = 'p'
+            elif row[1] == '0':
+                r2t[row[0]] = 'b'
+            elif row[1] == 'a':
+                r2t[row[0]] = 'b'
+            else:
+                print("Unrecognised type!")
+
+    p_contigs = []
+    with gzip.open(reads_path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fastq')
+        for record in tqdm(rows, ncols=120):
+            if r2t[record.id] != 'm':
+                p_contigs.append(record)
+    SeqIO.write(p_contigs, f"{save_path}{name}/paternal/{name}_yak_P.fasta", 'fasta')
+
+    del p_contigs
+    gc.collect()
+
+    m_contigs = []
+    with gzip.open(reads_path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fastq')
+        for record in tqdm(rows, ncols=120):
+            if r2t[record.id] != 'p':
+                m_contigs.append(record)
+    SeqIO.write(m_contigs, f"{save_path}{name}/maternal/{name}_yak_M.fasta", 'fasta')
+
 
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
@@ -754,5 +871,15 @@ if __name__ == "__main__":
 
     # read_seed_minigraphs(["arabidopsis_p022_l0", "bGalGal1_maternal_0.5_30x", "mus_musculus", "full_chm13"])
 
-    for n in ['arab']:
-        compare_gfas(n)
+    # for n in ['arab']:
+    #    assemble_hifi_gfa(n)
+
+    # find_dupes_in_gfa()
+
+    split_fasta(
+        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/yak_bonobo_c30.triobin",
+        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo/full_reads/bonobo_full_0.fq.gz",
+        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
+        name="bonobo"
+    )
+    '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/hg002/maternal/hg002_yak_M.fasta'

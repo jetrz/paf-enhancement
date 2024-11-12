@@ -1017,6 +1017,20 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                     'seqtk_path':"../GitHub/seqtk/seqtk"               
                 }
                 paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
+    elif dataset=="misc":
+        for name in names:
+            paths = {
+                'walks_path':f"/mnt/sod2-project/csb4/wgs/martin/assemblies/{name}/walks.pkl",
+                'fasta_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/full_reads/i002c_v04_chr18_0.pkl",
+                'paf_path':f'{c_path}/paf/{name}_full_0.pkl',
+                'n2s_path':f"{c_path}/reduced_reads/{name}_full_0.pkl", 
+                'r2n_path':f"{c_path}/read_to_node/{name}_full_0.pkl",
+                'save_path':f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/postprocessed/{name2}/",
+                'ref_path':f"/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/{name3}",
+                'graph_path':f"{c_path}/dgl_graphs/{name}_full_0.dgl",
+                'seqtk_path':"../GitHub/seqtk/seqtk"               
+            }
+            paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1054,6 +1068,8 @@ if __name__ == "__main__":
         names = [10,1,5,18,19]
     elif dataset == "diploid_test":
         names = ["hg002"]
+    elif dataset == "misc":
+        names = ["chr18hap10_m", "chr18hap10_p"]
 
     # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
@@ -1068,5 +1084,3 @@ if __name__ == "__main__":
     # run_paf_postprocessing(["mouse"], dataset="haploid_test_seeds", hyperparams=hyperparams)
     # hyperparams["walk_valid_p"] = 0.0005
     # run_paf_postprocessing(["chm13"], dataset="haploid_test_seeds", hyperparams=hyperparams)
-
-    run_paf_postprocessing(["chicken"], dataset="haploid_test", hyperparams=hyperparams)
