@@ -1031,7 +1031,7 @@ def run_paf_postprocessing(names, dataset, hyperparams):
                 'graph_path':f"/mnt/sod2-project/csb4/wgs/martin/diploid_datasets/master_seminar_d30/dgl_graphs/i002c_v04_chr18_0.dgl",
                 'seqtk_path':"../GitHub/seqtk/seqtk"               
             }
-            paf_postprocessing(name=name2, hyperparams=hyperparams, paths=paths)
+            paf_postprocessing(name=name, hyperparams=hyperparams, paths=paths)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1072,7 +1072,7 @@ if __name__ == "__main__":
     elif dataset == "misc":
         names = ["chr18hap10_m", "chr18hap10_p"]
 
-    # run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
+    run_paf_postprocessing(names, dataset=dataset, hyperparams=hyperparams)
 
     # hyperparams["walk_valid_p"] = 0.01
     # for names in [["arab"], ["chicken"], ["mouse"]]:

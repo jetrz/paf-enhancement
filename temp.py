@@ -1,6 +1,7 @@
 import dgl, gc, gzip, os, pickle, random, subprocess
 from collections import defaultdict
 import matplotlib.pyplot as plt
+from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -827,6 +828,12 @@ def find_dupes_in_gfa():
             else:
                 edges.add(curr_edge)
 
+def parse_record_p(record):
+    return record.id != 'm', record
+
+def parse_record_m(record):
+    return record.id != 'p', record
+
 def split_fasta(yak_path, reads_path, save_path, name):
     r2t = {}
     with open(yak_path) as f:
@@ -847,9 +854,10 @@ def split_fasta(yak_path, reads_path, save_path, name):
     p_contigs = []
     with gzip.open(reads_path, 'rt') as f:
         rows = SeqIO.parse(f, 'fastq')
-        for record in tqdm(rows, ncols=120):
-            if r2t[record.id] != 'm':
-                p_contigs.append(record)
+        with Pool(15) as pool:
+            results = pool.imap_unordered(parse_record_p, rows, chunksize=50)
+            for to_include, record in tqdm(results, ncols=120):
+                if to_include: p_contigs.append(record)
     SeqIO.write(p_contigs, f"{save_path}{name}/paternal/{name}_yak_P.fasta", 'fasta')
 
     del p_contigs
@@ -858,9 +866,10 @@ def split_fasta(yak_path, reads_path, save_path, name):
     m_contigs = []
     with gzip.open(reads_path, 'rt') as f:
         rows = SeqIO.parse(f, 'fastq')
-        for record in tqdm(rows, ncols=120):
-            if r2t[record.id] != 'p':
-                m_contigs.append(record)
+        with Pool(15) as pool:
+            results = pool.imap_unordered(parse_record_m, rows, chunksize=50)
+            for to_include, record in tqdm(results, ncols=120):
+                if to_include: m_contigs.append(record)
     SeqIO.write(m_contigs, f"{save_path}{name}/maternal/{name}_yak_M.fasta", 'fasta')
 
 
