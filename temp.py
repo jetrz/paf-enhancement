@@ -897,15 +897,15 @@ if __name__ == "__main__":
 
     # find_dupes_in_gfa()
 
-    # split_fasta(
-    #     yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/yak_bonobo_c30.triobin",
-    #     reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo/full_reads/bonobo_full_0.fq.gz",
-    #     save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-    #     name="bonobo"
-    # )
-
-    rename_files(
-        folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_p",
-        old_name="bonobo_p",
-        new_name="bonobo_30x_p"
+    split_fasta(
+        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_30.triobin",
+        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c30/full_reads/gorilla_full_0.fastq.gz",
+        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
+        name="gorilla_30x"
     )
+
+    # rename_files(
+        # folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_m",
+        # old_name="bonobo_m",
+        # new_name="bonobo_30x_m"
+    # )
