@@ -872,6 +872,18 @@ def split_fasta(yak_path, reads_path, save_path, name):
                 if to_include: m_contigs.append(record)
     SeqIO.write(m_contigs, f"{save_path}{name}/maternal/{name}_yak_M.fasta", 'fasta')
 
+def rename_files(folder, old_name, new_name):
+    for filename in os.listdir(folder):
+        if filename.startswith(old_name):
+            # Build the new filename
+            new_filename = new_name + filename[len(old_name):]
+            # Get full paths for renaming
+            old_file = os.path.join(folder, filename)
+            new_file = os.path.join(folder, new_filename)
+            # Rename the file
+            os.rename(old_file, new_file)
+
+
 
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
@@ -885,9 +897,15 @@ if __name__ == "__main__":
 
     # find_dupes_in_gfa()
 
-    split_fasta(
-        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/yak_bonobo_c30.triobin",
-        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo/full_reads/bonobo_full_0.fq.gz",
-        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-        name="bonobo"
+    # split_fasta(
+    #     yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/yak_bonobo_c30.triobin",
+    #     reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo/full_reads/bonobo_full_0.fq.gz",
+    #     save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
+    #     name="bonobo"
+    # )
+
+    rename_files(
+        folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_p",
+        old_name="bonobo_p",
+        new_name="bonobo_30x_p"
     )
