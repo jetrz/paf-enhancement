@@ -828,49 +828,63 @@ def find_dupes_in_gfa():
             else:
                 edges.add(curr_edge)
 
+R2T = {}
+
 def parse_record_p(record):
-    return record.id != 'm', record
+    if not R2T: print("Global r2t not set!")
+    return R2T[record.id] != 'm', record
 
 def parse_record_m(record):
-    return record.id != 'p', record
+    if not R2T: print("Global r2t not set!")
+    return R2T[record.id] != 'p', record
 
-def split_fasta(yak_path, reads_path, save_path, name):
-    r2t = {}
+def split_fasta(yak_path, reads_path, save_path, name, which="b"):
+    global R2T; R2T = {}
+    n_ps, n_ms, n_bs = 0, 0, 0
     with open(yak_path) as f:
         rows = f.readlines()
         for row in rows:
             row = row.strip().split()
             if row[1] == 'm':
-                r2t[row[0]] = 'm'
+                R2T[row[0]] = 'm'
+                n_ms += 1
             elif row[1] == 'p':
-                r2t[row[0]] = 'p'
+                R2T[row[0]] = 'p'
+                n_ps += 1
             elif row[1] == '0':
-                r2t[row[0]] = 'b'
+                R2T[row[0]] = 'b'
+                n_bs += 1
             elif row[1] == 'a':
-                r2t[row[0]] = 'b'
+                R2T[row[0]] = 'b'
+                n_bs += 1
             else:
                 print("Unrecognised type!")
+    print(f"Finished reading yak triobinning. n ps: {n_ps}, n ms: {n_ms}, n_bs: {n_bs}")
 
-    p_contigs = []
-    with gzip.open(reads_path, 'rt') as f:
-        rows = SeqIO.parse(f, 'fastq')
-        with Pool(15) as pool:
-            results = pool.imap_unordered(parse_record_p, rows, chunksize=50)
-            for to_include, record in tqdm(results, ncols=120):
-                if to_include: p_contigs.append(record)
-    SeqIO.write(p_contigs, f"{save_path}{name}/paternal/{name}_yak_P.fasta", 'fasta')
+    if which != "m":
+        p_contigs = []
+        with gzip.open(reads_path, 'rt') as f:
+            rows = SeqIO.parse(f, 'fastq')
+            with Pool(15) as pool:
+                results = pool.imap_unordered(parse_record_p, rows, chunksize=50)
+                for to_include, record in tqdm(results, ncols=120):
+                    if to_include: p_contigs.append(record)
+        print("Finished parsing for paternal. Number of reads:", len(p_contigs))
+        SeqIO.write(p_contigs, f"{save_path}{name}/paternal/{name}_yak_P.fasta", 'fasta')
 
-    del p_contigs
-    gc.collect()
+        del p_contigs
+        gc.collect()
 
-    m_contigs = []
-    with gzip.open(reads_path, 'rt') as f:
-        rows = SeqIO.parse(f, 'fastq')
-        with Pool(15) as pool:
-            results = pool.imap_unordered(parse_record_m, rows, chunksize=50)
-            for to_include, record in tqdm(results, ncols=120):
-                if to_include: m_contigs.append(record)
-    SeqIO.write(m_contigs, f"{save_path}{name}/maternal/{name}_yak_M.fasta", 'fasta')
+    if which != "p":
+        m_contigs = []
+        with gzip.open(reads_path, 'rt') as f:
+            rows = SeqIO.parse(f, 'fastq')
+            with Pool(15) as pool:
+                results = pool.imap_unordered(parse_record_m, rows, chunksize=50)
+                for to_include, record in tqdm(results, ncols=120):
+                    if to_include: m_contigs.append(record)
+        print("Finished parsing for maternal. Number of reads:", len(m_contigs))
+        SeqIO.write(m_contigs, f"{save_path}{name}/maternal/{name}_yak_M.fasta", 'fasta')
 
 def rename_files(folder, old_name, new_name):
     for filename in os.listdir(folder):
@@ -901,8 +915,17 @@ if __name__ == "__main__":
         yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_30.triobin",
         reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c30/full_reads/gorilla_full_0.fastq.gz",
         save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-        name="gorilla_30x"
+        name="gorilla_30x",
+        which="p"
     )
+    split_fasta(
+        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_30.triobin",
+        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c30/full_reads/gorilla_full_0.fastq.gz",
+        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
+        name="gorilla_30x",
+        which="m"
+    )
+
 
     # rename_files(
         # folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_m",
