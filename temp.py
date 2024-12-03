@@ -1,11 +1,11 @@
-import dgl, gc, gzip, os, pickle, random, subprocess
+import dgl, gc, gzip, mmap, os, pickle, random, subprocess, sqlite3
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from Bio import Seq, SeqIO
+from Bio import Seq, SeqIO, bgzf
 from tqdm import tqdm
 
 from decoding_paf import AdjList, Edge
@@ -862,6 +862,7 @@ def split_fasta(yak_path, reads_path, save_path, name, which="b"):
     print(f"Finished reading yak triobinning. n ps: {n_ps}, n ms: {n_ms}, n_bs: {n_bs}")
 
     if which != "m":
+        print("Starting to filter for paternal...")
         p_contigs = []
         with gzip.open(reads_path, 'rt') as f:
             rows = SeqIO.parse(f, 'fastq')
@@ -876,6 +877,7 @@ def split_fasta(yak_path, reads_path, save_path, name, which="b"):
         gc.collect()
 
     if which != "p":
+        print("Starting to filter for maternal...")
         m_contigs = []
         with gzip.open(reads_path, 'rt') as f:
             rows = SeqIO.parse(f, 'fastq')
@@ -897,7 +899,262 @@ def rename_files(folder, old_name, new_name):
             # Rename the file
             os.rename(old_file, new_file)
 
+from pyfaidx import Fasta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+def dummy(row):
+    r2s = Fasta(path)
+    row = row.strip().split()
+    read1, read2 = row[0], row[5]
+    return str(r2s[read1][:]), str(-r2s[read2][:])
+
+def test_pyfaidx():
+    with open('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ovlp.paf') as f:
+        rows = f.readlines()
+    print('hi')
+
+    # global r2s 
+    # r2s = Fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
+    # with ThreadPoolExecutor(max_workers=40) as executor:
+    #     futures = [executor.submit(dummy, row) for row in rows]
+    #     for future in tqdm(as_completed(futures), total=len(futures), ncols=120):
+    #         a, b = future.result()
+    
+    global path
+    path = '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa'
+    with Pool(40) as pool:
+        results = pool.imap_unordered(dummy, iter(rows), chunksize=160)
+        for code, data in tqdm(results, total=len(rows), ncols=120):
+            a = 1
+
+def test_pyfaidx2():
+    r2s = Fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/bonobo_ont/temp.fasta')
+    read = '1621606c-3050-4346-99e2-0500b61e1c37'
+    print(r2s[read][:])
+
+def convert_fastq_to_fasta(fastq_path, fasta_path):
+    SeqIO.convert(fastq_path, 'fastq', fasta_path, 'fasta')
+
+def yak_metrics(save_path, yak1, yak2, yak_path):
+    """
+    IMPT: asm_metrics have to be run before this to generate the assembly!
+    
+    Yak triobinning result files have following info:
+    C       F  seqName     type      startPos  endPos    count
+    C       W  #switchErr  denominator  switchErrRate
+    C       H  #hammingErr denominator  hammingErrRate
+    C       N  #totPatKmer #totMatKmer  errRate
+    """
+    print("Running yak trioeval...")
+    save_file = save_path+"phs.txt"
+    cmd = f'{yak_path} trioeval -t16 {yak1} {yak2} {save_path}0_assembly.fasta > {save_file}'.split()
+    with open(save_file, 'w') as f:
+        p = subprocess.Popen(cmd, stdout=f)
+    p.wait()
+
+    switch_err, hamming_err = None, None
+    with open(save_file, 'r') as file:
+        # Read all the lines and reverse them
+        lines = file.readlines()
+        reversed_lines = reversed(lines)
+        for line in reversed_lines:
+            if line.startswith('W'):
+                switch_err = float(line.split()[3])
+            elif line.startswith('H'):
+                hamming_err = float(line.split()[3])
+            if switch_err is not None and hamming_err is not None:
+                break
+
+    print(f"YAK Switch Err: {switch_err*100:.4f}%, YAK Hamming Err: {hamming_err*100:.4f}%")
+
+def evaluate_baseline_yak():
+    for genome in ["hg002_d_20x_p", "hg002_d_20x_m", "hg002_d_20x_scaf_p", "hg002_d_20x_scaf_m", "bonobo_d_20x_p", "bonobo_d_20x_m", "bonobo_d_20x_scaf_p", "bonobo_d_20x_scaf_m"]:
+        print(f"=== RUNNING FOR {genome} ===\n")
+        if genome.startswith('hg002'):
+            yak1, yak2 = '/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/pat.yak', '/mnt/sod2-project/csb4/wgs/martin/genome_references/hg002_v101/mat.yak'
+        else:
+            yak1, yak2 = '/mnt/sod2-project/csb4/wgs/martin/genome_references/mPanPan1_v2/panpan2.yak', '/mnt/sod2-project/csb4/wgs/martin/genome_references/mPanPan1_v2/panpan3.yak'
+
+        save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{genome}/'
+        yak_metrics(save_path, yak1, yak2, '/home/stumanuel/GitHub/yak/yak')
+
+def parse_read(read):
+    description = read.description.split()
+    id = description[0]
+    seqs = (str(read.seq), str(Seq.Seq(read.seq).reverse_complement()))
+    train_desc = read.description
+
+    return id, seqs, train_desc
+
+def parse_fasta(path):
+    print("Parsing FASTA...")
+    if path.endswith('gz'):
+        if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
+            filetype = 'fasta'
+        elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
+            filetype = 'fastq'
+    else:
+        if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
+            filetype = 'fasta'
+        elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
+            filetype = 'fastq'
+
+    data = {}
+    open_func = gzip.open if path.endswith('.gz') else open
+    with open_func(path, 'rt') as handle:
+        rows = SeqIO.parse(handle, filetype)
+
+        with Pool(15) as pool:
+            results = pool.imap_unordered(parse_read, rows, chunksize=50)
+            for id, seqs, train_desc in tqdm(results, ncols=120):
+                data[id] = seqs
+
+    return data
+
+
+def test_mmap_read(row):
+    row = row.strip().split()
+    return row[0], row[5]
+
+# def test_mmap():
+#     r2s = parse_fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
+#     file_name = "temp.pkl"
+#     with open(file_name, "wb") as f:
+#         pickle.dump(r2s, f)
+#     with open('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ovlp.paf') as f:
+#         rows = f.readlines()
+
+#     global loaded
+#     with open(file_name, "rb") as f:
+#         mmaped_file = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+#         loaded = pickle.loads(mmaped_file)
+
+#         with Pool(20) as pool:
+#             results = pool.imap_unordered(test_mmap_read, iter(rows), chunksize=160)
+#             for read1, read2, seq1, seq2 in tqdm(results, total=len(rows), ncols=120):
+#                 assert r2s[read1] == seq1, "Read1 mismatch!"
+#                 assert r2s[read2] == seq2, "Read2 mismatch!"
+
+#     mmaped_file.close()
+#     os.remove(file_name)
+
+class TempDB():
+    def __init__(self):
+        db_name = f'{random.randint(1,9999999)}.db'
+        self.db = db_name
+        conn = sqlite3.connect(db_name)
+        conn.execute('PRAGMA synchronous=OFF;')  # Disable synchronous mode
+        conn.execute('PRAGMA journal_mode=MEMORY;')  # Use in-memory journaling
+        cur = conn.cursor()
+        cur.execute('''
+        CREATE TABLE IF NOT EXISTS r2s (
+            read TEXT PRIMARY KEY,
+            seq TEXT,
+            seq_rev TEXT
+        )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def add(self, read, seqs):
+        conn = sqlite3.connect(self.db)
+        cur = conn.cursor()
+
+        # Insert or replace the key-value pair
+        cur.execute('''
+        INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
+        VALUES (?, ?, ?)
+        ''', (read, seqs[0], seqs[1]))
+
+        conn.commit()
+        conn.close()
+
+    def add_batch(self, data):
+        conn = sqlite3.connect(self.db)
+        cur = conn.cursor()
+        
+        conn.execute('BEGIN TRANSACTION')
+
+        statement = '''
+        INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
+        VALUES (?, ?, ?)
+        '''
+        cur.executemany(statement, data)
+
+        # for read, seqs in data:
+        #     cur.execute('''
+        #     INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
+        #     VALUES (?, ?, ?)
+        #     ''', (read, seqs[0], seqs[1]))
+
+        conn.commit()
+        conn.close()
+
+    def get(self, read):
+        conn = sqlite3.connect(self.db)
+        cur = conn.cursor()
+
+        # Fetch the value associated with the key
+        cur.execute('SELECT seq, seq_rev FROM r2s WHERE read = ?', (read,))
+        result = cur.fetchone()  # Returns a tuple like ('value1',) or None if not found
+
+        conn.close()
+        if result:
+            return result
+        else:
+            raise ValueError("Missing read!")
+        
+    def close(self):
+        if os.path.exists(self.db):
+            os.remove(self.db)
+
+def parse_fasta_2(path):
+    print("Parsing FASTA...")
+    if path.endswith('gz'):
+        if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
+            filetype = 'fasta'
+        elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
+            filetype = 'fastq'
+    else:
+        if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
+            filetype = 'fasta'
+        elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
+            filetype = 'fastq'
+
+    open_func = gzip.open if path.endswith('.gz') else open
+    with open_func(path, 'rt') as handle:
+        rows = SeqIO.parse(handle, filetype)
+
+        curr_batch = []
+        with Pool(15) as pool:
+            results = pool.imap_unordered(parse_read, rows, chunksize=50)
+            for idx, (read, seqs, train_desc) in tqdm(enumerate(results), ncols=120):
+                curr_batch.append((read, seqs[0], seqs[1]))
+                if idx % 100000 == 0:
+                    R2S.add_batch(curr_batch)
+                    curr_batch = []
+
+            R2S.add_batch(curr_batch)
+
+    return
+
+def test_custom_db():
+    global R2S
+    R2S = TempDB()
+
+    parse_fasta_2('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
+    r2s_local = parse_fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
+
+    with open('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ovlp.paf') as f:
+        rows = f.readlines()
+    with Pool(20) as pool:
+        results = pool.imap_unordered(test_mmap_read, iter(rows), chunksize=160)
+        for read1, read2 in tqdm(results, total=len(rows), ncols=120):
+            pass 
+            # assert R2S.get(read1)[0] == r2s_local[read1][0], "Read1 mismatch!"
+            # assert R2S.get(read2)[0] == r2s_local[read2][0], "Read2 mismatch!"
+
+    R2S.close()
 
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
@@ -911,24 +1168,18 @@ if __name__ == "__main__":
 
     # find_dupes_in_gfa()
 
-    split_fasta(
-        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_30.triobin",
-        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c30/full_reads/gorilla_full_0.fastq.gz",
-        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-        name="gorilla_30x",
-        which="p"
-    )
-    split_fasta(
-        yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_30.triobin",
-        reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c30/full_reads/gorilla_full_0.fastq.gz",
-        save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-        name="gorilla_30x",
-        which="m"
-    )
-
+    # split_fasta(
+    #     yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_20.triobin",
+    #     reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_c20/full_reads/bonobo_full_0.fastq.gz",
+    #     save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
+    #     name="bonobo_20x",
+    #     which="b"
+    # )
 
     # rename_files(
         # folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_m",
         # old_name="bonobo_m",
         # new_name="bonobo_30x_m"
     # )
+
+    test_custom_db()
