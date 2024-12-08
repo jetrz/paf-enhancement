@@ -1182,4 +1182,7 @@ if __name__ == "__main__":
         # new_name="bonobo_30x_m"
     # )
 
-    test_custom_db()
+    convert_fastq_to_fasta(
+        fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ec.fq',
+        fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ec.fa'
+    )
