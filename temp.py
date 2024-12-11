@@ -1,4 +1,4 @@
-import dgl, gc, gzip, mmap, os, pickle, random, subprocess, sqlite3
+import dgl, gc, gzip, mmap, os, pickle, random, shutil, subprocess, sqlite3, yaml
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
@@ -645,19 +645,6 @@ def run_chop_walks_seqtk(name):
 # for n in ['arab', 'chicken', 'mouse']:
 #     run_chop_walks_seqtk(n)
 
-def run_quast(name, type):
-    print(f"=== RUNNING QUAST FOR {name}, {type} ===")
-    asm_dir_name = 'default' if type == "GNNome" else type 
-    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/analysis/quast/{type}/{name}/'
-    cmd = f"quast /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/{asm_dir_name}/{name}/0_assembly.fasta -r {HAPLOID_TEST_REF[name]} -o {save_path} -t 16"
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    # print(cmd)
-    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-# for n in ['mouse', 'maize']:
-#     run_quast(n, 'postprocessed')
-
 def run_compleasm(name, type):
     print(f"=== RUNNING COMPLEASM FOR {name}, {type} ===")
     asm_dir_name = 'default' if type == "GNNome" else type 
@@ -1156,6 +1143,22 @@ def test_custom_db():
 
     R2S.close()
 
+def run_quast(name):
+    print(f"\n=== RUNNING QUAST FOR {name} ===")
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
+
+    save_path = f'quast_temp/'
+    cmd = f"quast /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -o {save_path} -t 16"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    with open(save_path+"report.txt") as f:
+        report = f.read()
+        print(report)
+
+    shutil.rmtree(save_path)
+
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
     #     # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
@@ -1182,7 +1185,10 @@ if __name__ == "__main__":
         # new_name="bonobo_30x_m"
     # )
 
-    convert_fastq_to_fasta(
-        fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ec.fq',
-        fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ec.fa'
-    )
+    # convert_fastq_to_fasta(
+    #     fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/hg005_d_ont_scaf/hg005_d_ont_scaf.ec.fq',
+    #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/hg005_d_ont_scaf/hg005_d_ont_scaf.ec.fa'
+    # )
+
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
+        run_quast(n)
