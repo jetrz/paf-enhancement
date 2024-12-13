@@ -1186,9 +1186,12 @@ if __name__ == "__main__":
     # )
 
     # convert_fastq_to_fasta(
-    #     fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/hg005_d_ont_scaf/hg005_d_ont_scaf.ec.fq',
-    #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/hg005_d_ont_scaf/hg005_d_ont_scaf.ec.fa'
+    #     fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fq',
+    #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fa'
     # )
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
+    #     run_quast(n)
+
+    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
         run_quast(n)
