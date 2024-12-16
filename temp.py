@@ -1148,16 +1148,20 @@ def run_quast(name):
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
-    save_path = f'quast_temp/'
-    cmd = f"quast /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -o {save_path} -t 16"
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
+    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/hifiasm/{name}'
+    cmd = f"quast {save_path}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -o {save_path}/quast -t 16"
+    if not os.path.exists(save_path+"/quast"):
+        os.makedirs(save_path+"/quast")
     subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    with open(save_path+"report.txt") as f:
+    with open(save_path+"/quast/report.txt") as f:
         report = f.read()
         print(report)
 
-    shutil.rmtree(save_path)
+    # shutil.rmtree(save_path)
+
+def load_dgl():
+    g = dgl.load_graphs('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/hifiasm/arab/arab.dgl')[0][0]
+    print(g)
 
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
@@ -1195,3 +1199,5 @@ if __name__ == "__main__":
 
     for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
         run_quast(n)
+
+    # load_dgl()
