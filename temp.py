@@ -923,7 +923,7 @@ def convert_fastq_to_fasta(fastq_path, fasta_path):
     SeqIO.convert(fastq_path, 'fastq', fasta_path, 'fasta')
 
 def convert_fastq_to_fasta_ec(name):
-    fastq_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.ec.fq',
+    fastq_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.ec.fq'
     fasta_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.ec.fa'
     SeqIO.convert(fastq_path, 'fastq', fasta_path, 'fasta')
 
@@ -1195,7 +1195,7 @@ if __name__ == "__main__":
     #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fa'
     # )
 
-    convert_fastq_to_fasta_ec('arab_ont')
+    convert_fastq_to_fasta_ec('tomato_ont')
 
     # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
     #     run_quast(n)
