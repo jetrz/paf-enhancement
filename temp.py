@@ -922,6 +922,11 @@ def test_pyfaidx2():
 def convert_fastq_to_fasta(fastq_path, fasta_path):
     SeqIO.convert(fastq_path, 'fastq', fasta_path, 'fasta')
 
+def convert_fastq_to_fasta_ec(name):
+    fastq_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.ec.fq',
+    fasta_path=f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.ec.fa'
+    SeqIO.convert(fastq_path, 'fastq', fasta_path, 'fasta')
+
 def yak_metrics(save_path, yak1, yak2, yak_path):
     """
     IMPT: asm_metrics have to be run before this to generate the assembly!
@@ -1159,10 +1164,6 @@ def run_quast(name):
 
     # shutil.rmtree(save_path)
 
-def load_dgl():
-    g = dgl.load_graphs('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/hifiasm/arab/arab.dgl')[0][0]
-    print(g)
-
 if __name__ == "__main__":
     # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
     #     # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
@@ -1194,10 +1195,10 @@ if __name__ == "__main__":
     #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fa'
     # )
 
+    convert_fastq_to_fasta_ec('arab_ont')
+
     # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
     #     run_quast(n)
 
-    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-        run_quast(n)
-
-    # load_dgl()
+    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     run_quast(n)
