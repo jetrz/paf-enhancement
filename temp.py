@@ -1153,7 +1153,7 @@ def run_quast(name):
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
-    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/hifiasm/{name}'
+    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{name}'
     cmd = f"quast {save_path}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -o {save_path}/quast -t 16"
     if not os.path.exists(save_path+"/quast"):
         os.makedirs(save_path+"/quast")
@@ -1195,10 +1195,10 @@ if __name__ == "__main__":
     #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fa'
     # )
 
-    convert_fastq_to_fasta_ec('tomato_ont')
+    # convert_fastq_to_fasta_ec('hg005_d_ont_scaf')
 
-    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_20x_p', 'hg002_20x_m', 'bonobo_20x_p', 'bonobo_20x_m', 'gorilla_20x_p', 'gorilla_20x_m', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'hg002_d_ul_20x_scaf_p', 'hg002_d_ul_20x_scaf_m', 'bonobo_d_ul_20x_scaf_p', 'bonobo_d_ul_20x_scaf_m', 'gorilla_d_ul_20x_scaf_p', 'gorilla_d_ul_20x_scaf_m']:
-    #     run_quast(n)
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+        run_quast(n)
 
     # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     run_quast(n)
