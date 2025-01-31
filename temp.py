@@ -7,6 +7,7 @@ import pandas as pd
 import seaborn as sns
 from Bio import Seq, SeqIO, bgzf
 from tqdm import tqdm
+import networkx as nx
 
 from decoding_paf import AdjList, Edge
 
@@ -1008,28 +1009,6 @@ def test_mmap_read(row):
     row = row.strip().split()
     return row[0], row[5]
 
-# def test_mmap():
-#     r2s = parse_fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
-#     file_name = "temp.pkl"
-#     with open(file_name, "wb") as f:
-#         pickle.dump(r2s, f)
-#     with open('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ovlp.paf') as f:
-#         rows = f.readlines()
-
-#     global loaded
-#     with open(file_name, "rb") as f:
-#         mmaped_file = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#         loaded = pickle.loads(mmaped_file)
-
-#         with Pool(20) as pool:
-#             results = pool.imap_unordered(test_mmap_read, iter(rows), chunksize=160)
-#             for read1, read2, seq1, seq2 in tqdm(results, total=len(rows), ncols=120):
-#                 assert r2s[read1] == seq1, "Read1 mismatch!"
-#                 assert r2s[read2] == seq2, "Read2 mismatch!"
-
-#     mmaped_file.close()
-#     os.remove(file_name)
-
 class TempDB():
     def __init__(self):
         db_name = f'{random.randint(1,9999999)}.db'
@@ -1148,34 +1127,101 @@ def test_custom_db():
 
     R2S.close()
 
-def run_quast(name):
-    print(f"\n=== RUNNING QUAST FOR {name} ===")
+def run_quast(name, type='res'):
+    print(f"\n=== RUNNING QUAST FOR {name}, type: {type} ===")
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
-    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{name}'
+    save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}'
     cmd = f"quast {save_path}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -o {save_path}/quast -t 16"
-    if not os.path.exists(save_path+"/quast"):
-        os.makedirs(save_path+"/quast")
-    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if os.path.exists(save_path+"/quast"): shutil.rmtree(save_path+"/quast")
+    os.makedirs(save_path+"/quast")
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    print(res.stderr)
     with open(save_path+"/quast/report.txt") as f:
         report = f.read()
         print(report)
 
-    # shutil.rmtree(save_path)
+reads = {
+    'arab' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/arabidopsis_new/PacBio_HiFi/CRR302668_p0.22.fastq.gz',
+    'chicken' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/gallus_gallus/HiFi/mat_0.5_30x.fastq.gz',
+    'chm13' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/CHM13/PacBio_HiFi/SRR11292120_3_subreads.fastq.gz',
+    'maize' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/zmays_Mo17/HiFi/zmays_Mo17-HiFi.fastq.gz',
+    'mouse' : '/mnt/sod2-project/csb4/wgs/lovro/sequencing_data/mus_musculus/SRR11606870.fastq',
+    'hg002_d_20x_scaf' : '/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/hg002_c20/full_reads/hg002_v101_full_0.fastq.gz',
+    'bonobo_d_20x_scaf' : '/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_c20/full_reads/mPanPan1_v2_full_0.fastq.gz',
+    'gorilla_d_20x_scaf' : '/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/gorilla_c20/full_reads/mGorGor1_v2_full_0.fastq.gz',
+    'arab_ont' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/arab_ont/SRR29061597_1.fastq.gz',
+    'fruitfly_ont' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/fruitfly/ont/SRR23215007_1.fastq.gz',
+    'tomato_ont' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/tomato/ont/R10.4_40x.noduplex.fastq.gz',
+    'hg005_d_ont_scaf' : '/mnt/sod2-project/csb4/wgs/lindehui/EVAL/HG005/11_1_22_R1041_Sheared_HG005_1_Guppy_6.2.11_prom_sup.fastq.gz',
+    'hg002_d_ont_scaf' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/hg002/hg002_ont/PAO83395.fastq',
+    'gorilla_d_ont_20x_scaf' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/gorilla/gorilla_ont/gorilla_ont.fa',
+    'bonobo_d_ont_20x_scaf' : '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/bonobo/bonobo_ont/bonobo_ont.fasta'
+}
+
+def gen_yak_count(name):
+    print("GENERATING YAK COUNT FOR:", name)
+    cmd = f'/home/stumanuel/GitHub/yak/yak count -b37 -t16 -o /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}.yak {reads[name]}'
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # print(res.stderr)
+    return
+
+def gen_yak_qv(name, type='res'):
+    print("GENERATING YAK QV FOR:", name, type)
+    if name.endswith('_p') or name.endswith('_m'):
+        yak_name = name[:-2]
+    else:
+        yak_name = name
+
+    cmd = f'/home/stumanuel/GitHub/yak/yak qv -t16 -p /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{yak_name}/{yak_name}.yak /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta > /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/{name}.qv.txt'
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # print(res.stdout)
+    return
+
+def read_yak_qv(name, type='res'):
+    print(f"READING YAK QV FOR {name}, {type}")
+    file = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/{name}.qv.txt'
+    with open(file, 'r') as f:
+        lines = f.readlines()
+        print(lines[-1])
+
+    return
+
+def analyse_t2t(name, motif, type='res'):
+    print(f"ANALYSING T2T FOR {name}, {type}")
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
+
+    cmd = f"/home/stumanuel/GitHub/T2T_Sequences/T2T_chromosomes.sh -a /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -m {motif} -t 10"
+    cwd = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}"
+    res = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    return
+
+def count_t2t(name):
+    print(f"\nNumber of T2T seqs for {name}")
+    for t in ["baseline", "res"]:
+        aligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{t}/hifiasm/{name}/T2T_sequences_alignment_T2T.txt"
+        with open(aligned_path, 'r') as f:
+            aligned_count = sum(1 for line in f)
+        unaligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{t}/hifiasm/{name}/T2T_sequences_motif_T2T.txt"
+        with open(unaligned_path, 'r') as f:
+            unaligned_count = sum(1 for line in f)
+            
+        print(f"{t}: | Unaligned: {unaligned_count} | Aligned: {aligned_count}")
+    
+    return
+
+def draw_graph():
+    with open('../GAP/misc/temp/temp_graph_nx.pkl', "rb") as f:
+        nx_g = pickle.load(f)
+
+    plt.figure(figsize=(30,30))
+    nx.draw(nx_g, with_labels=True, node_size=50, font_size=9)
+    plt.savefig('../GAP/misc/temp/temp_graph_nx.png')
 
 if __name__ == "__main__":
-    # for n in ['mouse', 'arab', 'chicken', 'chm13', 'maize-50p']:
-    #     # walks_fasta_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/res/default/{n}/0_assembly.fasta"
-    #     telomere_extraction(n, HAPLOID_TEST_REF[n])
-
-    # read_seed_minigraphs(["arabidopsis_p022_l0", "bGalGal1_maternal_0.5_30x", "mus_musculus", "full_chm13"])
-
-    # for n in ['arab']:
-    #    assemble_hifi_gfa(n)
-
-    # find_dupes_in_gfa()
-
     # split_fasta(
     #     yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_20.triobin",
     #     reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_c20/full_reads/bonobo_full_0.fastq.gz",
@@ -1197,8 +1243,27 @@ if __name__ == "__main__":
 
     # convert_fastq_to_fasta_ec('hg005_d_ont_scaf')
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-        run_quast(n)
+    for n in ['chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+        run_quast(n, type='res')
 
-    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-    #     run_quast(n)
+    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+        run_quast(n, type='res')
+
+    # for n in ['chicken', 'mouse', 'maize', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'gorilla_d_ont_20x_scaf', 'bonobo_d_ont_20x_scaf']:
+    #     gen_yak_count(n)
+
+    # for n in ['chm13', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'hg002_d_20x_scaf']:
+    #     gen_yak_count(n)
+
+    # for n in ['gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m', 'bonobo_d_ont_20x_scaf_p', 'bonobo_d_ont_20x_scaf_m']:
+    #     type = 'res'
+    #     gen_yak_qv(n, type=type)
+    #     read_yak_qv(n, type=type)
+
+    # for n in ['chicken', 'mouse', 'chm13', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'fruitfly_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     analyse_t2t(n, 'TTAGGG', 'res')
+
+    # for n in ['maize', 'arab_ont', 'tomato_ont']:
+    #     analyse_t2t(n, 'TTTAGGG', 'res')
+
+    draw_graph()
