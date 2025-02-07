@@ -8,6 +8,7 @@ import seaborn as sns
 from Bio import Seq, SeqIO, bgzf
 from tqdm import tqdm
 import networkx as nx
+from datetime import datetime
 
 from decoding_paf import AdjList, Edge
 
@@ -1221,49 +1222,113 @@ def draw_graph():
     nx.draw(nx_g, with_labels=True, node_size=50, font_size=9)
     plt.savefig('../GAP/misc/temp/temp_graph_nx.png')
 
+def get_seqs(id, hifi_r2s, ul_r2s):
+    if id in hifi_r2s:
+        return str(hifi_r2s[id][:]), str(-hifi_r2s[id][:])
+    elif ul_r2s is not None and id in ul_r2s:
+        return str(ul_r2s[id][:]), str(-ul_r2s[id][:])
+    else:
+        raise ValueError("Read not present in seq dataset FASTAs!")
+
+def hifiasm_decoding(paths, motif):
+    print(f"Loading files...")
+    c2s, links = {}, {}
+    with open(paths["gfa"]) as f:
+        rows = f.readlines()
+        for row in rows:
+            row = row.strip().split()
+            if row[0] == 'S': c2s[row[1]] = row[2]
+            if row[0] == "L": 
+                cid1, cid2 = row[1], row[3]
+                if cid1 == cid2: continue
+                orient1, orient2 = row[2], row[4]
+                overlap = int(row[5][:-1])
+                if cid1 in links:
+                    if overlap > links[cid1][1]:
+                        links[cid1] = (cid2, overlap, orient1, orient2)
+                else:
+                    links[cid1] = (cid2, overlap, orient1, orient2)
+
+    print("Creating graph...")
+    g = nx.DiGraph()
+    g.add_nodes_from(c2s.keys())
+    g.add_weighted_edges_from([(cid1, v[0], v[1]) for cid1, v in links.items()])
+
+    try:
+        while True:
+            cycle = nx.find_cycle(g, orientation='original')
+            # Remove the edge with the minimal weight in the detected cycle
+            edge_to_remove = min(cycle, key=lambda x: g[x[0]][x[1]]['weight'])
+            g.remove_edge(*edge_to_remove[:2])
+            print(f"Removed edge {edge_to_remove} to break the cycle")
+    except nx.NetworkXNoCycle:
+        print("No cycles left. The graph is acyclic.")
+
+    walks = []
+    while g.number_of_nodes() > 0:
+        longest_walk = nx.dag_longest_path(g)
+        walks.append(longest_walk)
+        g.remove_nodes_from(longest_walk)
+
+    print("Creating contigs...")
+    contigs = []
+    for idx, walk in enumerate(walks):
+        c_contig = ""
+        for i, cid in enumerate(walk[:-1]):
+            edge = links[cid]
+            if edge[0] != walk[i+1]: print("wrong edge found.... sigh")
+            overlap, orient1 = edge[1], edge[2]
+            if orient1 == '-':
+                c_contig += c2s[cid][::-1][:-overlap]
+            else:
+                c_contig += c2s[cid][:-overlap]
+
+        if len(walk) > 1:
+            if links[walk[-2]][3] == '+':
+                c_contig += c2s[walk[-1]]
+            else:
+                c_contig += c2s[walk[-1]][::-1]
+        else:
+            c_contig += c2s[walk[-1]]
+
+        c_contig = Seq.Seq(c_contig)
+        c_contig = SeqIO.SeqRecord(c_contig)
+        c_contig.id = f'contig_{idx+1}'
+        contigs.append(c_contig)
+
+    print(f"Calculating assembly metrics...")
+    save_path = "temp_save/"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    asm_path = save_path+f"temp_{random.randint(1,9999999)}.fasta"
+    SeqIO.write(contigs, asm_path, 'fasta')
+
+    cmd = f'/home/stumanuel/GitHub/minigraph/minigraph -t32 -xasm -g10k -r10k --show-unmap=yes {paths['ref']} {asm_path}'.split(' ')
+    paf = save_path+'asm.paf'
+    with open(paf, 'w') as f:
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE)
+    p.wait()
+
+    cmd = f'k8 /home/stumanuel/GitHub/minimap2/misc/paftools.js asmstat {paths['ref']+".fai"} {paf}'.split()
+    report = save_path+"minigraph.txt"
+    with open(report, 'w') as f:
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE)
+    p.wait()
+    with open(report) as f:
+        report = f.read()
+        print(report)
+
+    shutil.rmtree(save_path)
+
+    return
+
 if __name__ == "__main__":
-    # split_fasta(
-    #     yak_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_20.triobin",
-    #     reads_path="/mnt/sod2-project/csb4/wgs/martin/real_diploid_data/hifi_data/bonobo_c20/full_reads/bonobo_full_0.fastq.gz",
-    #     save_path="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/",
-    #     name="bonobo_20x",
-    #     which="b"
-    # )
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
 
-    # rename_files(
-        # folder="/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_30x_m",
-        # old_name="bonobo_m",
-        # new_name="bonobo_30x_m"
-    # )
-
-    # convert_fastq_to_fasta(
-    #     fastq_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fq',
-    #     fasta_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/bonobo_d_ont_20x_scaf/bonobo_d_ont_20x_scaf.ec.fa'
-    # )
-
-    # convert_fastq_to_fasta_ec('hg005_d_ont_scaf')
-
-    for n in ['chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-        run_quast(n, type='res')
-
-    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-        run_quast(n, type='res')
-
-    # for n in ['chicken', 'mouse', 'maize', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'gorilla_d_ont_20x_scaf', 'bonobo_d_ont_20x_scaf']:
-    #     gen_yak_count(n)
-
-    # for n in ['chm13', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'hg002_d_20x_scaf']:
-    #     gen_yak_count(n)
-
-    # for n in ['gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m', 'bonobo_d_ont_20x_scaf_p', 'bonobo_d_ont_20x_scaf_m']:
-    #     type = 'res'
-    #     gen_yak_qv(n, type=type)
-    #     read_yak_qv(n, type=type)
-
-    # for n in ['chicken', 'mouse', 'chm13', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'fruitfly_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-    #     analyse_t2t(n, 'TTAGGG', 'res')
-
-    # for n in ['maize', 'arab_ont', 'tomato_ont']:
-    #     analyse_t2t(n, 'TTTAGGG', 'res')
-
-    draw_graph()
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+        print(f"\n=== Performing modified hifiasm decoding for {n} ===")
+        paths = config['genome_info'][n]['paths']
+        paths.update(config['misc']['paths'])
+        motif = config['genome_info'][n]['telo_motifs'][0]
+        hifiasm_decoding(paths, motif)
