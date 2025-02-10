@@ -1,4 +1,4 @@
-import dgl, gc, gzip, mmap, os, pickle, random, shutil, subprocess, sqlite3, yaml
+import dgl, gc, gzip, mmap, os, pickle, random, re, shutil, subprocess, sqlite3, yaml
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
@@ -1319,8 +1319,418 @@ def hifiasm_decoding(paths, motif):
         print(report)
 
     shutil.rmtree(save_path)
-
     return
+
+def test_paf_edges(genome, full_reads_path):
+    def chop_walks_seqtk(old_walks, n2s, graph, rep1, rep2, seqtk_path):
+        """
+        Generates telomere information, then chops the walks. 
+        1. I regenerate the contigs from the walk nodes. I'm not sure why but when regenerating it this way it differs slightly from the assembly fasta, so i'm doing it this way just to be safe.
+        2. seqtk is used to detect telomeres, then I manually count the motifs in each region to determine if it is a '+' or '-' motif.
+        3. The walks are then chopped. When a telomere is found:
+            a. If there is no telomere in the current walk, and the walk is already >= twice the length of the found telomere, the telomere is added to the walk and then chopped.
+            b. If there is an opposite telomere in the current walk, the telomere is added to the walk and then chopped.
+            c. If there is an identical telomere in the current walk, the walk is chopped and a new walk begins with the found telomere.
+        """
+
+        # Create a list of all edges
+        edges_full = {}  ## I dont know why this is necessary. but when cut transitives some edges are wrong otherwise. (This comment is from Martin's script)
+        for idx, (src, dst) in enumerate(zip(graph.edges()[0], graph.edges()[1])):
+            src, dst = src.item(), dst.item()
+            edges_full[(src, dst)] = idx
+
+        # Regenerate old contigs
+        old_contigs, pos_to_node = [], defaultdict(dict)
+        for walk_id, walk in enumerate(old_walks):
+            seq, curr_pos = "", 0
+            for idx, node in enumerate(walk):
+                # Preprocess the sequence
+                c_seq = str(n2s[node])
+                if idx != len(walk)-1:
+                    c_prefix = graph.edata['prefix_length'][edges_full[node,walk[idx+1]]]
+                    c_seq = c_seq[:c_prefix]
+
+                seq += c_seq
+                c_len_seq = len(c_seq)
+                for i in range(curr_pos, curr_pos+c_len_seq):
+                    pos_to_node[walk_id][i] = node
+                curr_pos += c_len_seq
+            old_contigs.append(seq)
+        
+        temp_fasta_name = f'temp_{random.randint(1,9999999)}.fasta'
+        with open(temp_fasta_name, 'w') as f:
+            for i, contig in enumerate(old_contigs):
+                f.write(f'>{i}\n')  # Using index as ID
+                f.write(f'{contig}\n')
+
+        # Use seqtk to get telomeric regions
+        seqtk_cmd_rep1 = f"{seqtk_path} telo -m {rep1} {temp_fasta_name}"
+        seqtk_cmd_rep2 = f"{seqtk_path} telo -m {rep2} {temp_fasta_name}"
+        seqtk_res_rep1 = subprocess.run(seqtk_cmd_rep1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        seqtk_res_rep2 = subprocess.run(seqtk_cmd_rep2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if seqtk_res_rep1.returncode != 0: raise RuntimeError(seqtk_res_rep1.stderr.strip())
+        if seqtk_res_rep2.returncode != 0: raise RuntimeError(seqtk_res_rep2.stderr.strip())
+        seqtk_res_rep1 = seqtk_res_rep1.stdout.split("\n"); seqtk_res_rep1.pop()
+        seqtk_res_rep2 = seqtk_res_rep2.stdout.split("\n"); seqtk_res_rep2.pop()
+
+        telo_info = defaultdict(dict)
+        for row in seqtk_res_rep1:
+            row_split = row.split("\t")
+            walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+            c_seq = old_contigs[walk_id][start:end]
+            rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+            c_rep = rep1 if rep1_count > rep2_count else rep2
+            start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
+            if start_node in telo_info[walk_id]:
+                print("Duplicate telomere region found 1!")
+            else:
+                telo_info[walk_id][start_node] = (end_node, c_rep)
+        for row in seqtk_res_rep2:
+            row_split = row.split("\t")
+            walk_id, start, end = int(row_split[0]), int(row_split[1]), int(row_split[2])-1
+            c_seq = old_contigs[walk_id][start:end]
+            rep1_count, rep2_count = c_seq.count(rep1), c_seq.count(rep2)
+            c_rep = rep1 if rep1_count > rep2_count else rep2
+            start_node, end_node = pos_to_node[walk_id][start], pos_to_node[walk_id][end]
+            if start_node in telo_info[walk_id]:
+                print("Duplicate telomere region found 2!")
+            else:
+                telo_info[walk_id][start_node] = (end_node, c_rep)
+        os.remove(temp_fasta_name)
+
+        # Chop walks
+        new_walks, telo_ref = [], {}
+        for walk_id, walk in enumerate(old_walks):
+            curr_ind, curr_walk, curr_telo = 0, [], None
+            while curr_ind < len(walk):
+                curr_node = walk[curr_ind]
+                if curr_node in telo_info[walk_id]:
+                    end_node, telo_type = telo_info[walk_id][curr_node]
+                    if curr_telo is None: # There is currently no telo type in the walk. 
+                        curr_telo = telo_type
+                        init_walk_len = len(curr_walk)
+                        while True:
+                            curr_node = walk[curr_ind]
+                            curr_walk.append(curr_node)
+                            curr_ind += 1
+                            if curr_node == end_node: break
+                        if init_walk_len != 0: # if there was anything before the telomeric region, include the region and chop the walk
+                            new_walks.append(curr_walk.copy())
+                            telo_ref[len(new_walks)-1] = {
+                                'start' : None,
+                                'end' : '+' if curr_telo == rep1 else '-'
+                            }
+                            curr_walk, curr_telo = [], None
+                    elif curr_telo == telo_type: # The newly found telo type matches the current walk's telo type. Should be chopped immediately.
+                        new_walks.append(curr_walk.copy())
+                        telo_ref[len(new_walks)-1] = {
+                            'start' : '+' if curr_telo == rep1 else '-',
+                            'end' : None
+                        }
+                        curr_walk, curr_telo = [], telo_type
+                        while True:
+                            curr_node = walk[curr_ind]
+                            curr_walk.append(curr_node)
+                            curr_ind += 1
+                            if curr_node == end_node: break
+                    else: # The newly found telo type does not match the current walk's telo type. Add the telomeric region, then chop the walk.
+                        while True:
+                            curr_node = walk[curr_ind]
+                            curr_walk.append(curr_node)
+                            curr_ind += 1
+                            if curr_node == end_node: 
+                                new_walks.append(curr_walk.copy())
+                                telo_ref[len(new_walks)-1] = {
+                                    'start' : '+' if curr_telo == rep1 else '-',
+                                    'end' : '+' if telo_type == rep1 else '-'
+                                }
+                                curr_walk, curr_telo = [], None
+                                break
+                else:
+                    curr_walk.append(curr_node)
+                    curr_ind += 1
+
+            if curr_walk: 
+                new_walks.append(curr_walk.copy())
+                if curr_telo == rep1:
+                    start_telo = '+'
+                elif curr_telo == rep2:
+                    start_telo = '-'
+                else:
+                    start_telo = None
+                telo_ref[len(new_walks)-1] = {
+                    'start' : start_telo,
+                    'end' : None
+                }
+
+        # Sanity Check
+        assert [item for inner in new_walks for item in inner] == [item for inner in old_walks for item in inner], "Not all nodes accounted for when chopping old walks!"
+
+        rep1_count, rep2_count = 0, 0
+        for v in telo_ref.values():
+            if v['start'] == '+': rep1_count += 1
+            if v['end'] == '+': rep1_count += 1
+            if v['start'] == '-': rep2_count += 1
+            if v['end'] == '-': rep2_count += 1
+        print(f"Chopping complete! n Old Walks: {len(old_walks)}, n New Walks: {len(new_walks)}, n +ve telomeric regions: {rep1_count}, n -ve telomeric regions: {rep2_count}")
+
+        return new_walks, telo_ref
+
+    def add_ghosts(old_walks, paf_data, r2n, n2r, hifi_r2s, ul_r2s, n2s, old_graph, walk_valid_p, r2i):
+        """
+        Adds nodes and edges from the PAF and graph.
+
+        1. Stores all nodes in the walks that are available for connection in n2n_start and n2n_end (based on walk_valid_p). 
+        This is split into nodes at the start and end of walks bc incoming edges can only connect to nodes at the start of walks, and outgoing edges can only come from nodes at the end of walks.
+        2. I add edges between existing walk nodes using information from PAF (although in all experiments no such edges have been found).
+        3. I add nodes using information from PAF.
+        4. I add nodes using information from the graph (and by proxy the GFA).
+        5. I calculate the probability scores for all these new edges using GNNome's model and save them in e2s. This info is only used if decoding = 'gnnome_score'.
+        """
+
+        def is_valid_edge(rid1, rid2):
+            r_info1, r_info2 = r2i[rid1], r2i[rid2]
+            if r_info1['strand'] != r_info2['strand'] or r_info1['variant'] != r_info2['variant'] or r_info1['chr'] != r_info2['chr']:
+                return False
+        
+            return (r_info1['end'] >= r_info2['start'] and r_info1['start'] > r_info2['start']) or (r_info2['end'] >= r_info1['start'] and r_info2['start'] > r_info1['start'])
+
+        n_id = 0
+        adj_list = AdjList()
+
+        # Only the first and last walk_valid_p% of nodes in a walk can be connected. Also initialises nodes from walks
+        n2n_start, n2n_end = {}, {} # n2n maps old n_id to new n_id, for the start and ends of the walks respectively
+        walk_ids = [] # all n_ids that belong to walks
+        nodes_in_old_walks = set()
+        for walk in old_walks:
+            nodes_in_old_walks.update(walk)
+
+            if len(walk) == 1:
+                n2n_start[walk[0]] = n_id
+                n2n_end[walk[0]] = n_id
+            else:
+                cutoff = int(max(1, len(walk) // (1/walk_valid_p)))
+                first_part, last_part = walk[:cutoff], walk[-cutoff:]
+                for n in first_part:
+                    n2n_start[n] = n_id
+                for n in last_part:
+                    n2n_end[n] = n_id
+
+            walk_ids.append(n_id)
+            n_id += 1
+
+        print(f"Adding edges between existing nodes...")
+        valid_src, valid_dst, prefix_lens, ol_lens, ol_sims, ghost_data = paf_data['ghost_edges']['valid_src'], paf_data['ghost_edges']['valid_dst'], paf_data['ghost_edges']['prefix_len'], paf_data['ghost_edges']['ol_len'], paf_data['ghost_edges']['ol_similarity'], paf_data['ghost_nodes']
+        added_edges_count = 0
+        for i in range(len(valid_src)):
+            src, dst, prefix_len, ol_len, ol_sim = valid_src[i], valid_dst[i], prefix_lens[i], ol_lens[i], ol_sims[i]
+            if src in n2n_end and dst in n2n_start:
+                if n2n_end[src] == n2n_start[dst]: continue # ignore self-edges
+                added_edges_count += 1
+                adj_list.add_edge(Edge(
+                    new_src_nid=n2n_end[src], 
+                    new_dst_nid=n2n_start[dst], 
+                    old_src_nid=src, 
+                    old_dst_nid=dst, 
+                    prefix_len=prefix_len, 
+                    ol_len=ol_len, 
+                    ol_sim=ol_sim
+                ))
+        print("Added edges:", added_edges_count)
+
+        print(f"Adding ghost nodes...")
+        valid_edge_count, total_edge_count = 0, 0
+        n2s_ghost = {}
+        ghost_data = ghost_data['hop_1'] # WE ONLY DO FOR 1-HOP FOR NOW
+        added_nodes_count = 0
+        for orient in ['+', '-']:
+            for read_id, data in ghost_data[orient].items():
+                curr_out_neighbours, curr_in_neighbours = set(), set()
+
+                for i, out_read_id in enumerate(data['outs']):
+                    out_n_id = r2n[out_read_id[0]][0] if out_read_id[1] == '+' else r2n[out_read_id[0]][1]
+                    if out_n_id not in n2n_start: continue
+                    curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_similarity_outs'][i], out_read_id))
+
+                for i, in_read_id in enumerate(data['ins']):
+                    in_n_id = r2n[in_read_id[0]][0] if in_read_id[1] == '+' else r2n[in_read_id[0]][1] 
+                    if in_n_id not in n2n_end: continue
+                    curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_similarity_ins'][i], in_read_id))
+
+                # ghost nodes are only useful if they have both at least one outgoing and one incoming edge
+                if not curr_out_neighbours or not curr_in_neighbours: continue
+
+                for n in curr_out_neighbours:
+                    adj_list.add_edge(Edge(
+                        new_src_nid=n_id,
+                        new_dst_nid=n2n_start[n[0]],
+                        old_src_nid=None,
+                        old_dst_nid=n[0],
+                        prefix_len=n[1],
+                        ol_len=n[2],
+                        ol_sim=n[3]
+                    ))
+                    if is_valid_edge(read_id, n[4]): valid_edge_count += 1
+                    total_edge_count += 1
+                for n in curr_in_neighbours:
+                    adj_list.add_edge(Edge(
+                        new_src_nid=n2n_end[n[0]],
+                        new_dst_nid=n_id,
+                        old_src_nid=n[0],
+                        old_dst_nid=None,
+                        prefix_len=n[1],
+                        ol_len=n[2],
+                        ol_sim=n[3]
+                    ))
+                    if is_valid_edge(n[4], read_id): valid_edge_count += 1
+                    total_edge_count += 1
+
+                if orient == '+':
+                    seq, _ = get_seqs(read_id, hifi_r2s, ul_r2s)
+                else:
+                    _, seq = get_seqs(read_id, hifi_r2s, ul_r2s)
+                n2s_ghost[n_id] = seq
+                n_id += 1
+                added_nodes_count += 1
+        print("Number of nodes added from PAF:", added_nodes_count)
+
+        print(f"Adding nodes from old graph...")
+        edges, edge_features = old_graph.edges(), old_graph.edata
+        graph_data = defaultdict(lambda: defaultdict(list))
+        for i in range(edges[0].shape[0]):
+            src_node = edges[0][i].item()  
+            dst_node = edges[1][i].item()  
+            ol_len = edge_features['overlap_length'][i].item()  
+            ol_sim = edge_features['overlap_similarity'][i].item()
+            prefix_len = edge_features['prefix_length'][i].item() 
+
+            if src_node not in nodes_in_old_walks:
+                graph_data[src_node]['read_len'] = old_graph.ndata['read_length'][src_node]
+                graph_data[src_node]['outs'].append(dst_node)
+                graph_data[src_node]['ol_len_outs'].append(ol_len)
+                graph_data[src_node]['ol_sim_outs'].append(ol_sim)
+                graph_data[src_node]['prefix_len_outs'].append(prefix_len)
+
+            if dst_node not in nodes_in_old_walks:
+                graph_data[dst_node]['read_len'] = old_graph.ndata['read_length'][dst_node]
+                graph_data[dst_node]['ins'].append(src_node)
+                graph_data[dst_node]['ol_len_ins'].append(ol_len)
+                graph_data[dst_node]['ol_sim_ins'].append(ol_sim)
+                graph_data[dst_node]['prefix_len_ins'].append(prefix_len)
+
+        # add to adj list where applicable
+        for old_node_id, data in graph_data.items():
+            curr_out_neighbours, curr_in_neighbours = set(), set()
+
+            for i, out_n_id in enumerate(data['outs']):
+                if out_n_id not in n2n_start: continue
+                curr_out_neighbours.add((out_n_id, data['prefix_len_outs'][i], data['ol_len_outs'][i], data['ol_sim_outs'][i]))
+
+            for i, in_n_id in enumerate(data['ins']):
+                if in_n_id not in n2n_end: continue
+                curr_in_neighbours.add((in_n_id, data['prefix_len_ins'][i], data['ol_len_ins'][i], data['ol_sim_ins'][i]))
+
+            if not curr_out_neighbours or not curr_in_neighbours: continue
+
+            for n in curr_out_neighbours:
+                adj_list.add_edge(Edge(
+                    new_src_nid=n_id,
+                    new_dst_nid=n2n_start[n[0]],
+                    old_src_nid=None,
+                    old_dst_nid=n[0],
+                    prefix_len=n[1],
+                    ol_len=n[2],
+                    ol_sim=n[3]
+                ))
+                if is_valid_edge(n2r[old_node_id], n2r[n[0]]): valid_edge_count += 1
+                total_edge_count += 1
+            for n in curr_in_neighbours:
+                adj_list.add_edge(Edge(
+                    new_src_nid=n2n_end[n[0]],
+                    new_dst_nid=n_id,
+                    old_src_nid=n[0],
+                    old_dst_nid=None,
+                    prefix_len=n[1],
+                    ol_len=n[2],
+                    ol_sim=n[3]
+                ))
+                if is_valid_edge(n2r[n[0]], n2r[old_node_id]): valid_edge_count += 1
+                total_edge_count += 1
+
+            seq = n2s[old_node_id]
+            n2s_ghost[n_id] = seq
+            n_id += 1
+            added_nodes_count += 1
+
+        print("Final number of nodes:", n_id)
+        if added_edges_count or added_nodes_count:
+            return valid_edge_count, total_edge_count
+        else:
+            return None, None
+    
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
+
+    postprocessing_config = config['postprocessing']
+    postprocessing_config['telo_motif'] = config['genome_info'][genome]['telo_motifs']
+    paths = config['genome_info'][genome]['paths']
+    paths.update(config['misc']['paths'])
+
+    print("Loading files...")
+    aux = {}
+    with open(paths['walks'], 'rb') as f:
+        aux['walks'] = pickle.load(f)
+    with open(paths['n2s'], 'rb') as f:
+        aux['n2s'] = pickle.load(f)
+    with open(paths['r2n'], 'rb') as f:
+        aux['r2n'] = pickle.load(f)
+    with open(paths['paf_processed'], 'rb') as f:
+        aux['paf_data'] = pickle.load(f)
+    aux['old_graph'] = dgl.load_graphs(paths['graph']+f'{genome}.dgl')[0][0]
+    aux['hifi_r2s'] = Fasta(paths['ec_reads'])
+    aux['ul_r2s'] = Fasta(paths['ul_reads']) if paths['ul_reads'] else None
+
+    walks, n2s, r2n, paf_data, old_graph, hifi_r2s, ul_r2s = aux['walks'], aux['n2s'], aux['r2n'], aux['paf_data'], aux['old_graph'], aux['hifi_r2s'], aux['ul_r2s']
+    rep1, rep2 = postprocessing_config['telo_motif'][0], postprocessing_config['telo_motif'][1]
+    walks, telo_ref = chop_walks_seqtk(walks, n2s, old_graph, rep1, rep2, paths['seqtk'])
+
+    print("Parsing full reads fasta...")
+    r2i = defaultdict(dict)
+    pattern = r"strand=(?P<strand>\S+) start=(?P<start>\d+) end=(?P<end>\d+) variant=(?P<variant>\S+) chr=(?P<chr>\S+)"
+    for record in SeqIO.parse(full_reads_path, 'fasta'):
+        description = record.description.split()
+        match = re.search(pattern, description)
+        # If a match is found, extract the values
+        if match:
+            r2i[record.id]['strand'] = match.group("strand")
+            r2i[record.id]['start'] = match.group("start")
+            r2i[record.id]['end'] = match.group("end")
+            r2i[record.id]['variant'] = match.group("variant")
+            r2i[record.id]['chr'] = match.group("chr")
+        else:
+            print("No match found!")
+
+    n2r = {}
+    for r, nodes in r2n.items():
+        n2r[nodes[0]] = r
+        n2r[nodes[1]] = r
+
+    scores = {}
+    for w in [0.025, 0.02, 0.015, 0.01, 0.005, 0.001]:
+        valid_edge_count, total_edge_count = add_ghosts(
+            old_walks=walks,
+            paf_data=paf_data,
+            r2n=r2n,
+            n2r=n2r,
+            hifi_r2s=hifi_r2s,
+            ul_r2s=ul_r2s,
+            n2s=n2s,
+            old_graph=old_graph,
+            walk_valid_p=w,
+            r2i=r2i
+        )
+        scores[w] = (valid_edge_count, total_edge_count)
+        print(f"For walk_valid_p = {w}: \nValid Edge Count: {valid_edge_count} | Total Edge Count:{total_edge_count} | Percentage: {valid_edge_count/total_edge_count:.4f}%")
 
 if __name__ == "__main__":
     with open("config.yaml") as file:
