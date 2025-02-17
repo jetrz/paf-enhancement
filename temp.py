@@ -1189,28 +1189,29 @@ def read_yak_qv(name, type='res'):
 
     return
 
-def analyse_t2t(name, motif, type='res'):
+def analyse_t2t(name, type='res'):
     print(f"ANALYSING T2T FOR {name}, {type}")
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
+    motif = config['genome_info']['name']['telo_motifs'][0]
     cmd = f"/home/stumanuel/GitHub/T2T_Sequences/T2T_chromosomes.sh -a /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -m {motif} -t 10"
     cwd = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}"
     res = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     return
 
-def count_t2t(name):
-    print(f"\nNumber of T2T seqs for {name}")
-    for t in ["baseline", "res"]:
-        aligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{t}/hifiasm/{name}/T2T_sequences_alignment_T2T.txt"
-        with open(aligned_path, 'r') as f:
-            aligned_count = sum(1 for line in f)
-        unaligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{t}/hifiasm/{name}/T2T_sequences_motif_T2T.txt"
-        with open(unaligned_path, 'r') as f:
-            unaligned_count = sum(1 for line in f)
-            
-        print(f"{t}: | Unaligned: {unaligned_count} | Aligned: {aligned_count}")
+def count_t2t(name, type='res'):
+    print(f"\nNumber of T2T seqs for {name}, {type}")
+
+    aligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/T2T_sequences_alignment_T2T.txt"
+    with open(aligned_path, 'r') as f:
+        aligned_count = sum(1 for line in f)
+    unaligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/T2T_sequences_motif_T2T.txt"
+    with open(unaligned_path, 'r') as f:
+        unaligned_count = sum(1 for line in f)
+        
+    print(f"Unaligned: {unaligned_count} | Aligned: {aligned_count}")
     
     return
 
@@ -1746,5 +1747,16 @@ if __name__ == "__main__":
     # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
     #     run_quast(n, type='res')
 
-    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-        run_quast(n, type='res')
+    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     run_quast(n, type='res')
+
+
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+        for _ in range(5):
+            analyse_t2t(n, type='baseline')
+            count_t2t(n, type='baseline')
+
+    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     for _ in range(5):
+    #         analyse_t2t(n, type='baseline')
+    #         count_t2t(n, type='baseline')
