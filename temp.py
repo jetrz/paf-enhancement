@@ -1,4 +1,4 @@
-import dgl, gc, gzip, mmap, os, pickle, random, re, shutil, subprocess, sqlite3, yaml
+import dgl, gc, glob, gzip, mmap, os, pickle, random, re, shutil, subprocess, sqlite3, yaml
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
@@ -1194,7 +1194,15 @@ def analyse_t2t(name, type='res'):
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
-    motif = config['genome_info']['name']['telo_motifs'][0]
+    if os.path.exists(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta.seqkit.fai"):
+        # This has been run before, delete and re-run
+        os.remove(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta.seqkit.fai")
+        pattern = os.path.join(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/", "T2T*")
+        ftd = glob.glob(pattern)
+        for f in ftd:
+            os.remove(f)
+
+    motif = config['genome_info'][name]['telo_motifs'][0]
     cmd = f"/home/stumanuel/GitHub/T2T_Sequences/T2T_chromosomes.sh -a /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -m {motif} -t 10"
     cwd = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}"
     res = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1756,7 +1764,7 @@ if __name__ == "__main__":
             analyse_t2t(n, type='baseline')
             count_t2t(n, type='baseline')
 
-    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    # for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     for _ in range(5):
     #         analyse_t2t(n, type='baseline')
     #         count_t2t(n, type='baseline')
