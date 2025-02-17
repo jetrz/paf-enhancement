@@ -1210,7 +1210,7 @@ def analyse_t2t(name, type='res'):
     return
 
 def count_t2t(name, type='res'):
-    print(f"\nNumber of T2T seqs for {name}, {type}")
+    print(f"Number of T2T seqs for {name}, {type}")
 
     aligned_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/T2T_sequences_alignment_T2T.txt"
     with open(aligned_path, 'r') as f:
@@ -1759,12 +1759,20 @@ if __name__ == "__main__":
     #     run_quast(n, type='res')
 
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-        for _ in range(5):
-            analyse_t2t(n, type='baseline')
-            count_t2t(n, type='baseline')
-
-    # for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-    #     for _ in range(5):
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+    #     for c in range(5):
+    #         print("COUNT:", c)
     #         analyse_t2t(n, type='baseline')
     #         count_t2t(n, type='baseline')
+    #         analyse_t2t(n, type='res')
+    #         count_t2t(n, type='res')
+    #         print("\n")
+
+    for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+        for c in range(5):
+            print("COUNT:", c)
+            analyse_t2t(n, type='baseline')
+            count_t2t(n, type='baseline')
+            analyse_t2t(n, type='res')
+            count_t2t(n, type='res')
+            print("\n")
