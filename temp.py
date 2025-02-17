@@ -1733,12 +1733,18 @@ def test_paf_edges(genome, full_reads_path):
         print(f"For walk_valid_p = {w}: \nValid Edge Count: {valid_edge_count} | Total Edge Count:{total_edge_count} | Percentage: {valid_edge_count/total_edge_count:.4f}%")
 
 if __name__ == "__main__":
-    with open("config.yaml") as file:
-        config = yaml.safe_load(file)
+    # with open("config.yaml") as file:
+    #     config = yaml.safe_load(file)
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-        print(f"\n=== Performing modified hifiasm decoding for {n} ===")
-        paths = config['genome_info'][n]['paths']
-        paths.update(config['misc']['paths'])
-        motif = config['genome_info'][n]['telo_motifs'][0]
-        hifiasm_decoding(paths, motif)
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+    #     print(f"\n=== Performing modified hifiasm decoding for {n} ===")
+    #     paths = config['genome_info'][n]['paths']
+    #     paths.update(config['misc']['paths'])
+    #     motif = config['genome_info'][n]['telo_motifs'][0]
+    #     hifiasm_decoding(paths, motif)
+
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+    #     run_quast(n, type='res')
+
+    for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+        run_quast(n, type='res')
