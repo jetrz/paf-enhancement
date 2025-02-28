@@ -1205,7 +1205,7 @@ def analyse_t2t(name, type='res'):
     motif = config['genome_info'][name]['telo_motifs'][0]
     cmd = f"/home/stumanuel/GitHub/T2T_Sequences/T2T_chromosomes.sh -a /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}/0_assembly.fasta -r {config['genome_info'][name]['paths']['ref']} -m {motif} -t 10"
     cwd = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/{type}/hifiasm/{name}"
-    res = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     return
 
@@ -1312,13 +1312,13 @@ def hifiasm_decoding(paths, motif):
     asm_path = save_path+f"temp_{random.randint(1,9999999)}.fasta"
     SeqIO.write(contigs, asm_path, 'fasta')
 
-    cmd = f'/home/stumanuel/GitHub/minigraph/minigraph -t32 -xasm -g10k -r10k --show-unmap=yes {paths['ref']} {asm_path}'.split(' ')
+    cmd = f'/home/stumanuel/GitHub/minigraph/minigraph -t32 -xasm -g10k -r10k --show-unmap=yes {paths["ref"]} {asm_path}'.split(' ')
     paf = save_path+'asm.paf'
     with open(paf, 'w') as f:
         p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE)
     p.wait()
 
-    cmd = f'k8 /home/stumanuel/GitHub/minimap2/misc/paftools.js asmstat {paths['ref']+".fai"} {paf}'.split()
+    cmd = f'k8 /home/stumanuel/GitHub/minimap2/misc/paftools.js asmstat {paths["ref"]+".fai"} {paf}'.split()
     report = save_path+"minigraph.txt"
     with open(report, 'w') as f:
         p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE)
@@ -1759,16 +1759,7 @@ if __name__ == "__main__":
     #     run_quast(n, type='res')
 
 
-    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-    #     for c in range(5):
-    #         print("COUNT:", c)
-    #         analyse_t2t(n, type='baseline')
-    #         count_t2t(n, type='baseline')
-    #         analyse_t2t(n, type='res')
-    #         count_t2t(n, type='res')
-    #         print("\n")
-
-    for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
         for c in range(5):
             print("COUNT:", c)
             analyse_t2t(n, type='baseline')
@@ -1776,3 +1767,12 @@ if __name__ == "__main__":
             analyse_t2t(n, type='res')
             count_t2t(n, type='res')
             print("\n")
+
+    # for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     for c in range(5):
+    #         print("COUNT:", c)
+    #         analyse_t2t(n, type='baseline')
+    #         count_t2t(n, type='baseline')
+    #         analyse_t2t(n, type='res')
+    #         count_t2t(n, type='res')
+    #         print("\n")
