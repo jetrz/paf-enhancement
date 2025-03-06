@@ -2,14 +2,28 @@ run:
   preprocessing:
     source: 'hifiasm'
     genomes:
-      - 'i002c_v04_multi_21_0_syn'
+      # - 'arab'
+      # - 'chicken'
+      # - 'mouse'
+      # - 'chm13'
+      # - 'maize'
+      # - 'arab_ont'
+      # - 'tomato_ont'
+      # - 'fruitfly_ont'
   generate_baseline:
     source: 'hifiasm'
     genomes:
-      - 'i002c_v04_multi_21_0_syn'
+      # - 'arab'
+      # - 'chicken'
+      # - 'mouse'
+      # - 'chm13'
+      # - 'maize'
+      # - 'arab_ont'
+      # - 'tomato_ont'
+      # - 'fruitfly_ont'
   postprocessing:
     genomes:
-      # - 'arab'
+      - 'arab'
       # - 'chicken'
       # - 'mouse'
       # - 'maize'
@@ -390,6 +404,63 @@ misc:
 #       r2n: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/bonobo_30x_m/bonobo_30x_m_r2n.pkl'
 #       save: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/GNNome/bonobo_30x_m/'
 #       walks: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/bonobo_30x_m/walks.pkl' # Ensure this aligns with baseline
+#       yak1: ~
+#       yak2: ~
+#   tomato_ont:
+#     telo_motifs:
+#       - 'TTTAGGG'
+#       - 'CCCTAAA'
+#     paths:
+#       ec_reads: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ec.fa'
+#       ul_reads: ~
+#       gfa: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.bp.raw.r_utg.gfa'
+#       baseline: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/tomato_ont/'
+#       graph: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/tomato_ont/'
+#       n2s: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/tomato_ont/tomato_ont_n2s.pkl'
+#       paf: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/tomato_ont/tomato_ont.ovlp.paf'
+#       paf_processed: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/tomato_ont/tomato_ont_paf_data.pkl'
+#       ref: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/tomato/ref/GCA_022405115.1_ASM2240511v1_genomic.fna'
+#       r2n: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/tomato_ont/tomato_ont_r2n.pkl'
+#       save: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/GNNome/tomato_ont/'
+#       walks: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/tomato_ont/walks.pkl' # Ensure this aligns with baseline
+#       yak1: ~
+#       yak2: ~
+#   fruitfly_ont:
+#     telo_motifs:
+#       - 'TTAGGG'
+#       - 'CCCTAA'
+#     paths:
+#       ec_reads: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/fruitfly_ont/fruitfly_ont.ec.fa'
+#       ul_reads: ~
+#       gfa: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/fruitfly_ont/fruitfly_ont.bp.raw.r_utg.gfa'
+#       baseline: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/fruitfly_ont/'
+#       graph: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/fruitfly_ont/'
+#       n2s: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/fruitfly_ont/fruitfly_ont_n2s.pkl'
+#       paf: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/fruitfly_ont/fruitfly_ont.ovlp.paf'
+#       paf_processed: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/fruitfly_ont/fruitfly_ont_paf_data.pkl'
+#       ref: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/fruitfly/ref/GCA_018904365.1_ASM1890436v1_genomic.fna'
+#       r2n: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/fruitfly_ont/fruitfly_ont_r2n.pkl'
+#       save: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/GNNome/fruitfly_ont/'
+#       walks: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/fruitfly_ont/walks.pkl' # Ensure this aligns with baseline
+#       yak1: ~
+#       yak2: ~
+#   arab_ont:
+#     telo_motifs:
+#       - 'TTTAGGG'
+#       - 'CCCTAAA'
+#     paths:
+#       ec_reads: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab_ont/arab_ont.ec.fa'
+#       ul_reads: ~
+#       gfa: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab_ont/arab_ont.bp.raw.r_utg.gfa'
+#       baseline: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/arab_ont/'
+#       graph: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/arab_ont/'
+#       n2s: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/arab_ont/arab_ont_n2s.pkl'
+#       paf: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab_ont/arab_ont.ovlp.paf'
+#       paf_processed: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/arab_ont/arab_ont_paf_data.pkl'
+#       ref: '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/arabidopsis/latest/GWHBDNP00000000.1.genome.fasta'
+#       r2n: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/GNNome/arab_ont/arab_ont_r2n.pkl'
+#       save: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/res/GNNome/arab_ont/'
+#       walks: '/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/GNNome/arab_ont/walks.pkl' # Ensure this aligns with baseline
 #       yak1: ~
 #       yak2: ~
 

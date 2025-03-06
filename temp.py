@@ -972,161 +972,10 @@ def evaluate_baseline_yak():
         save_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/baseline/hifiasm/{genome}/'
         yak_metrics(save_path, yak1, yak2, '/home/stumanuel/GitHub/yak/yak')
 
-def parse_read(read):
-    description = read.description.split()
-    id = description[0]
-    seqs = (str(read.seq), str(Seq.Seq(read.seq).reverse_complement()))
-    train_desc = read.description
-
-    return id, seqs, train_desc
-
-def parse_fasta(path):
-    print("Parsing FASTA...")
-    if path.endswith('gz'):
-        if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
-            filetype = 'fasta'
-        elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
-            filetype = 'fastq'
-    else:
-        if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
-            filetype = 'fasta'
-        elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
-            filetype = 'fastq'
-
-    data = {}
-    open_func = gzip.open if path.endswith('.gz') else open
-    with open_func(path, 'rt') as handle:
-        rows = SeqIO.parse(handle, filetype)
-
-        with Pool(15) as pool:
-            results = pool.imap_unordered(parse_read, rows, chunksize=50)
-            for id, seqs, train_desc in tqdm(results, ncols=120):
-                data[id] = seqs
-
-    return data
-
 
 def test_mmap_read(row):
     row = row.strip().split()
     return row[0], row[5]
-
-class TempDB():
-    def __init__(self):
-        db_name = f'{random.randint(1,9999999)}.db'
-        self.db = db_name
-        conn = sqlite3.connect(db_name)
-        conn.execute('PRAGMA synchronous=OFF;')  # Disable synchronous mode
-        conn.execute('PRAGMA journal_mode=MEMORY;')  # Use in-memory journaling
-        cur = conn.cursor()
-        cur.execute('''
-        CREATE TABLE IF NOT EXISTS r2s (
-            read TEXT PRIMARY KEY,
-            seq TEXT,
-            seq_rev TEXT
-        )
-        ''')
-        conn.commit()
-        conn.close()
-
-    def add(self, read, seqs):
-        conn = sqlite3.connect(self.db)
-        cur = conn.cursor()
-
-        # Insert or replace the key-value pair
-        cur.execute('''
-        INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
-        VALUES (?, ?, ?)
-        ''', (read, seqs[0], seqs[1]))
-
-        conn.commit()
-        conn.close()
-
-    def add_batch(self, data):
-        conn = sqlite3.connect(self.db)
-        cur = conn.cursor()
-        
-        conn.execute('BEGIN TRANSACTION')
-
-        statement = '''
-        INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
-        VALUES (?, ?, ?)
-        '''
-        cur.executemany(statement, data)
-
-        # for read, seqs in data:
-        #     cur.execute('''
-        #     INSERT OR REPLACE INTO r2s (read, seq, seq_rev)
-        #     VALUES (?, ?, ?)
-        #     ''', (read, seqs[0], seqs[1]))
-
-        conn.commit()
-        conn.close()
-
-    def get(self, read):
-        conn = sqlite3.connect(self.db)
-        cur = conn.cursor()
-
-        # Fetch the value associated with the key
-        cur.execute('SELECT seq, seq_rev FROM r2s WHERE read = ?', (read,))
-        result = cur.fetchone()  # Returns a tuple like ('value1',) or None if not found
-
-        conn.close()
-        if result:
-            return result
-        else:
-            raise ValueError("Missing read!")
-        
-    def close(self):
-        if os.path.exists(self.db):
-            os.remove(self.db)
-
-def parse_fasta_2(path):
-    print("Parsing FASTA...")
-    if path.endswith('gz'):
-        if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
-            filetype = 'fasta'
-        elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
-            filetype = 'fastq'
-    else:
-        if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
-            filetype = 'fasta'
-        elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
-            filetype = 'fastq'
-
-    open_func = gzip.open if path.endswith('.gz') else open
-    with open_func(path, 'rt') as handle:
-        rows = SeqIO.parse(handle, filetype)
-
-        curr_batch = []
-        with Pool(15) as pool:
-            results = pool.imap_unordered(parse_read, rows, chunksize=50)
-            for idx, (read, seqs, train_desc) in tqdm(enumerate(results), ncols=120):
-                curr_batch.append((read, seqs[0], seqs[1]))
-                if idx % 100000 == 0:
-                    R2S.add_batch(curr_batch)
-                    curr_batch = []
-
-            R2S.add_batch(curr_batch)
-
-    return
-
-def test_custom_db():
-    global R2S
-    R2S = TempDB()
-
-    parse_fasta_2('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
-    r2s_local = parse_fasta('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ec.fa')
-
-    with open('/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/arab.ovlp.paf') as f:
-        rows = f.readlines()
-    with Pool(20) as pool:
-        results = pool.imap_unordered(test_mmap_read, iter(rows), chunksize=160)
-        for read1, read2 in tqdm(results, total=len(rows), ncols=120):
-            pass 
-            # assert R2S.get(read1)[0] == r2s_local[read1][0], "Read1 mismatch!"
-            # assert R2S.get(read2)[0] == r2s_local[read2][0], "Read2 mismatch!"
-
-    R2S.close()
 
 def run_quast(name, type='res'):
     print(f"\n=== RUNNING QUAST FOR {name}, type: {type} ===")
@@ -1741,9 +1590,53 @@ def test_paf_edges(genome, full_reads_path):
         scores[w] = (valid_edge_count, total_edge_count)
         print(f"For walk_valid_p = {w}: \nValid Edge Count: {valid_edge_count} | Total Edge Count:{total_edge_count} | Percentage: {valid_edge_count/total_edge_count:.4f}%")
 
+def gen_kmers(name):
+    print(f"=== GENERATING KMERS FOR {name} ===")
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
+
+    command = f"jellyfish count -m 100 -s 100M -t 10 -o 100mers.jf -C {config['genome_info'][name]['paths']['ec_reads']}"
+    subprocess.run(command, shell=True, cwd=config['genome_info'][name]['paths']['graph'])
+
+def parse_read(read):
+    seqs = (str(read.seq), str(Seq(read.seq).reverse_complement()))
+    return read.id, seqs
+
+def parse_fasta(path):
+    print(f"Parsing {path}...")
+
+    if path.endswith('bgz'):
+        if path.endswith('fasta.bgz') or path.endswith('fna.bgz') or path.endswith('fa.bgz'):
+            filetype = 'fasta'
+        elif path.endswith('fastq.bgz') or path.endswith('fnq.bgz') or path.endswith('fq.bgz'):
+            filetype = 'fastq'
+        open_func = bgzf.open
+    elif path.endswith('gz'):
+        if path.endswith('fasta.gz') or path.endswith('fna.gz') or path.endswith('fa.gz'):
+            filetype = 'fasta'
+        elif path.endswith('fastq.gz') or path.endswith('fnq.gz') or path.endswith('fq.gz'):
+            filetype = 'fastq'
+        open_func = gzip.open
+    else:
+        if path.endswith('fasta') or path.endswith('fna') or path.endswith('fa'):
+            filetype = 'fasta'
+        elif path.endswith('fastq') or path.endswith('fnq') or path.endswith('fq'):
+            filetype = 'fastq'
+        open_func = open
+
+    data = {}
+    with open_func(path, 'rt') as handle:
+        rows = SeqIO.parse(handle, filetype)
+        with Pool(15) as pool:
+            results = pool.imap_unordered(parse_read, rows, chunksize=50)
+            for id, seqs in tqdm(results, ncols=120):
+                data[id] = seqs
+
+    return data
+
 if __name__ == "__main__":
-    # with open("config.yaml") as file:
-    #     config = yaml.safe_load(file)
+    with open("config.yaml") as file:
+        config = yaml.safe_load(file)
 
     # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
     #     print(f"\n=== Performing modified hifiasm decoding for {n} ===")
@@ -1758,15 +1651,14 @@ if __name__ == "__main__":
     # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     run_quast(n, type='res')
 
-
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-        for c in range(5):
-            print("COUNT:", c)
-            analyse_t2t(n, type='baseline')
-            count_t2t(n, type='baseline')
-            analyse_t2t(n, type='res')
-            count_t2t(n, type='res')
-            print("\n")
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
+    #     for c in range(5):
+    #         print("COUNT:", c)
+    #         analyse_t2t(n, type='baseline')
+    #         count_t2t(n, type='baseline')
+    #         analyse_t2t(n, type='res')
+    #         count_t2t(n, type='res')
+    #         print("\n")
 
     # for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     for c in range(5):
@@ -1776,3 +1668,9 @@ if __name__ == "__main__":
     #         analyse_t2t(n, type='res')
     #         count_t2t(n, type='res')
     #         print("\n")
+
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+        ec_path = config['genome_info'][n]['paths']['ec_reads']
+        data = parse_fasta(ec_path)
+        with open(config['genome_info'][n]['paths']['graph']+f'{n}_r2s.pkl', "wb") as p:
+            pickle.dump(data, p)
