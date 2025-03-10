@@ -1636,10 +1636,9 @@ def parse_fasta(path):
 
     return data
 
-def test_mers_dump():
-    f = Fasta("/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/hifiasm/chicken/21mers.fa")
-    print(f['AAAAAAAAAAAAAAAAAAAAA'])
-    print(f['CCTGTGGAGCCTACACTACAA'])
+def mers_dump(name):
+    cmd = "jellyfish dump 21mers.jf > 21mers.fa"
+    subprocess.run(cmd, shell=True, cwd=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/")
 
 if __name__ == "__main__":
     with open("config.yaml") as file:
@@ -1682,4 +1681,5 @@ if __name__ == "__main__":
     #     with open(f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/r2s.pkl', "wb") as p:
     #         pickle.dump(data, p)
 
-    test_mers_dump()
+    for n in ['arab', 'chm13', 'maize', 'chm13', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
+        mers_dump(n)
