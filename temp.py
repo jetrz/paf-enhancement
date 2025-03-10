@@ -4,8 +4,10 @@ import matplotlib.pyplot as plt
 from multiprocessing import Pool
 import numpy as np
 import pandas as pd
+from pyfaidx import Fasta
 import seaborn as sns
-from Bio import Seq, SeqIO, bgzf
+from Bio import SeqIO, bgzf
+from Bio.Seq import Seq
 from tqdm import tqdm
 import networkx as nx
 from datetime import datetime
@@ -1634,6 +1636,11 @@ def parse_fasta(path):
 
     return data
 
+def test_mers_dump():
+    f = Fasta("/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/supp/hifiasm/chicken/21mers.fa")
+    print(f['AAAAAAAAAAAAAAAAAAAAA'])
+    print(f['CCTGTGGAGCCTACACTACAA'])
+
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
@@ -1669,8 +1676,10 @@ if __name__ == "__main__":
     #         count_t2t(n, type='res')
     #         print("\n")
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-        ec_path = config['genome_info'][n]['paths']['ec_reads']
-        data = parse_fasta(ec_path)
-        with open(config['genome_info'][n]['paths']['graph']+f'{n}_r2s.pkl', "wb") as p:
-            pickle.dump(data, p)
+    # for n in ['gorilla_d_ont_20x_scaf']:
+    #     ec_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/{n}.ec.fa'
+    #     data = parse_fasta(ec_path)
+    #     with open(f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/r2s.pkl', "wb") as p:
+    #         pickle.dump(data, p)
+
+    test_mers_dump()
