@@ -1637,6 +1637,7 @@ def parse_fasta(path):
     return data
 
 def mers_dump(name):
+    print(f"=== DUMPING KMERS FOR {name} ===")
     cmd = "jellyfish dump 21mers.jf > 21mers.fa"
     subprocess.run(cmd, shell=True, cwd=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/")
 
