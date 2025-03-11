@@ -1641,6 +1641,21 @@ def mers_dump(name):
     cmd = "jellyfish dump 21mers.jf > 21mers.fa"
     subprocess.run(cmd, shell=True, cwd=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/")
 
+def parse_kmer(read):
+    return str(read.seq), int(read.id)
+
+def parse_kmer_fasta(path):
+    print("Parsing kmer fasta...")
+    data = {}
+    with open(path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
+            for kmer, freq in tqdm(results, ncols=120):
+                data[kmer] = freq
+
+    return data
+
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
@@ -1682,5 +1697,9 @@ if __name__ == "__main__":
     #     with open(f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/r2s.pkl', "wb") as p:
     #         pickle.dump(data, p)
 
-    for n in ['arab', 'chm13', 'maize', 'chm13', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
-        mers_dump(n)
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'chm13', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
+        print("running for", n)
+        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
+        res = parse_kmer_fasta(path)
+        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
+            pickle.dump(res, p)
