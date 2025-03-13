@@ -1,5 +1,5 @@
 import dgl, gc, glob, gzip, mmap, os, pickle, random, re, shutil, subprocess, sqlite3, yaml
-from collections import defaultdict
+from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
 import numpy as np
@@ -11,6 +11,7 @@ from Bio.Seq import Seq
 from tqdm import tqdm
 import networkx as nx
 from datetime import datetime
+from scipy.signal import argrelextrema
 
 from decoding_paf import AdjList, Edge
 
@@ -1656,6 +1657,31 @@ def parse_kmer_fasta(path):
 
     return data
 
+def filter_out_kmers(d, name):
+    """
+    Filters out kmers by frequency.
+    Lower threshold is the first local minima from the left, upper threshold is the first local minima after the average.
+    Method from the paper "Constructing telomere-to-telomere diploid genome by polishing haploid nanopore-based assembly"
+    """
+    print(f"\n=== FILTERING OUT KMERS FOR {name} ===")
+    kmer_freqs = list(d.values())
+    average = np.mean(kmer_freqs)
+    unique_kmer_freqs = np.array(list(set(kmer_freqs)))
+    nearest_average = unique_kmer_freqs[(np.abs(unique_kmer_freqs - average)).argmin()]
+
+    freqs = Counter(kmer_freqs)
+    max_freq = np.max(unique_kmer_freqs)
+    values = np.array([freqs.get(i,0) for i in range(1, max_freq+1)])
+    minima_inds = argrelextrema(values, np.less)[0]
+    lower = minima_inds[0]
+    for m in minima_inds:
+        if m > nearest_average-1:
+            upper = m
+            break
+
+    filtered_d = {k:v for k,v in d.items() if lower <= v <= upper}
+    return filtered_d
+
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
@@ -1697,9 +1723,19 @@ if __name__ == "__main__":
     #     with open(f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/r2s.pkl', "wb") as p:
     #         pickle.dump(data, p)
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'chm13', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
-        print("running for", n)
-        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
-        res = parse_kmer_fasta(path)
-        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
-            pickle.dump(res, p)
+    # for n in ['tomato_ont', 'hg005_d_ont_scaf']:
+    #     print("running for", n)
+    #     path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
+    #     res = parse_kmer_fasta(path)
+    #     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
+    #         pickle.dump(res, p)
+
+    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'fruitfly_ont', 'tomato_ont', 'arab_ont']:
+        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl"
+        with open(path, 'rb') as f:
+            print(f"loading {n}...")
+            d = pickle.load(f)
+            filtered_d = filter_out_kmers(d, n)
+        with open(path, "wb") as p:
+            print(f"writing {n}...")
+            pickle.dump(filtered_d, p)
