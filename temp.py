@@ -1731,11 +1731,10 @@ if __name__ == "__main__":
     #         pickle.dump(res, p)
 
     for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'fruitfly_ont', 'tomato_ont', 'arab_ont']:
-        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl"
-        with open(path, 'rb') as f:
+        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", 'rb') as f:
             print(f"loading {n}...")
             d = pickle.load(f)
             filtered_d = filter_out_kmers(d, n)
-        with open(path, "wb") as p:
+        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers_solid.pkl", "wb") as p:
             print(f"writing {n}...")
             pickle.dump(filtered_d, p)
