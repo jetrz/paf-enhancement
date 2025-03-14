@@ -1657,14 +1657,20 @@ def parse_kmer_fasta(path):
 
     return data
 
-def filter_out_kmers(d, name):
+def filter_out_kmers(name):
     """
     Filters out kmers by frequency.
     Lower threshold is the first local minima from the left, upper threshold is the first local minima after the average.
     Method from the paper "Constructing telomere-to-telomere diploid genome by polishing haploid nanopore-based assembly"
     """
     print(f"\n=== FILTERING OUT KMERS FOR {name} ===")
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers.pkl", 'rb') as f:
+        d = pickle.load(f)
+
     kmer_freqs = list(d.values())
+    cutoff = np.percentile(kmer_freqs, 99)
+    kmer_freqs = [i for i in kmer_freqs if i <= cutoff]
+
     average = np.mean(kmer_freqs)
     unique_kmer_freqs = np.array(list(set(kmer_freqs)))
     nearest_average = unique_kmer_freqs[(np.abs(unique_kmer_freqs - average)).argmin()]
@@ -1680,62 +1686,32 @@ def filter_out_kmers(d, name):
             break
 
     filtered_d = {k:v for k,v in d.items() if lower <= v <= upper}
-    return filtered_d
+    with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers_solid.pkl", "wb") as p:
+        print(f"writing {n}...")
+        pickle.dump(filtered_d, p)
+
+    plt.figure(figsize=(10, 5))
+    x_indices = range(1, len(values) + 1)
+    plt.plot(x_indices, values)
+    plt.axvline(x=lower, color='r', linestyle='--', label=f'Lower Bound at {lower}')
+    plt.axvline(x=nearest_average, color='g', linestyle='--', label=f'Average at {nearest_average}')
+    plt.axvline(x=upper, color='b', linestyle='--', label=f'Upper Bound at {upper}')
+
+    plt.xlabel('Kmer Frequency')
+    plt.ylabel('# Kmers')
+    plt.title(f'Kmer Freq Distribution for {name}')
+    plt.savefig(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers.png")
+    plt.clf()
+
+    return
 
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
 
-    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-    #     print(f"\n=== Performing modified hifiasm decoding for {n} ===")
-    #     paths = config['genome_info'][n]['paths']
-    #     paths.update(config['misc']['paths'])
-    #     motif = config['genome_info'][n]['telo_motifs'][0]
-    #     hifiasm_decoding(paths, motif)
-
-    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-    #     run_quast(n, type='res')
-
     # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     run_quast(n, type='res')
 
-    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m']:
-    #     for c in range(5):
-    #         print("COUNT:", c)
-    #         analyse_t2t(n, type='baseline')
-    #         count_t2t(n, type='baseline')
-    #         analyse_t2t(n, type='res')
-    #         count_t2t(n, type='res')
-    #         print("\n")
-
-    # for n in ['arab_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
-    #     for c in range(5):
-    #         print("COUNT:", c)
-    #         analyse_t2t(n, type='baseline')
-    #         count_t2t(n, type='baseline')
-    #         analyse_t2t(n, type='res')
-    #         count_t2t(n, type='res')
-    #         print("\n")
-
-    # for n in ['gorilla_d_ont_20x_scaf']:
-    #     ec_path = f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/{n}.ec.fa'
-    #     data = parse_fasta(ec_path)
-    #     with open(f'/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/r2s.pkl', "wb") as p:
-    #         pickle.dump(data, p)
-
-    # for n in ['tomato_ont', 'hg005_d_ont_scaf']:
-    #     print("running for", n)
-    #     path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
-    #     res = parse_kmer_fasta(path)
-    #     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
-    #         pickle.dump(res, p)
-
     for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'fruitfly_ont', 'tomato_ont', 'arab_ont']:
-        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl"
-        with open(path, 'rb') as f:
-            print(f"loading {n}...")
-            d = pickle.load(f)
-            filtered_d = filter_out_kmers(d, n)
-        with open(path, "wb") as p:
-            print(f"writing {n}...")
-            pickle.dump(filtered_d, p)
+        filter_out_kmers(n)
+
