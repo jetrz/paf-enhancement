@@ -1665,10 +1665,12 @@ def filter_out_kmers(name):
     """
     print(f"\n=== FILTERING OUT KMERS FOR {name} ===")
     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers.pkl", 'rb') as f:
+        print("reading...")
         d = pickle.load(f)
 
+    print("filtering...")
     kmer_freqs = list(d.values())
-    cutoff = np.percentile(kmer_freqs, 99)
+    cutoff = np.percentile(kmer_freqs, 99.5)
     kmer_freqs = [i for i in kmer_freqs if i <= cutoff]
 
     average = np.mean(kmer_freqs)
@@ -1679,15 +1681,17 @@ def filter_out_kmers(name):
     max_freq = np.max(unique_kmer_freqs)
     values = np.array([freqs.get(i,0) for i in range(1, max_freq+1)])
     minima_inds = argrelextrema(values, np.less)[0]
-    lower = minima_inds[0]
+
+    lower, upper = minima_inds[0]+1, None
     for m in minima_inds:
         if m > nearest_average-1:
             upper = m
             break
+    if upper is None: upper = len(values)
 
     filtered_d = {k:v for k,v in d.items() if lower <= v <= upper}
     with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers_solid.pkl", "wb") as p:
-        print(f"writing {n}...")
+        print(f"writing...")
         pickle.dump(filtered_d, p)
 
     plt.figure(figsize=(10, 5))
@@ -1705,6 +1709,68 @@ def filter_out_kmers(name):
 
     return
 
+def run_minimap_on_ref(ref_path, name):
+    print(f"\n=== RUNNING REF FOR {name} ===")
+    paf = "/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/temp/asm.paf"
+    cmd = f'/home/stumanuel/GitHub/minigraph/minigraph -t32 -xasm -g10k -r10k --show-unmap=yes {ref_path} {ref_path}'.split(' ')
+    with open(paf, 'w') as f:
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.DEVNULL)
+    p.wait()
+
+    cmd = f'k8 /home/stumanuel/GitHub/minimap2/misc/paftools.js asmstat {ref_path+".fai"} {paf}'.split()
+    report = "/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/temp/minigraph.txt"
+    with open(report, 'w') as f:
+        p = subprocess.Popen(cmd, stdout=f)
+    p.wait()
+    with open(report) as f:
+        print(f.read())
+
+    os.remove(paf); os.remove(report)
+
+    return
+
+
+def parse_record_row(record):
+    return record.id, record
+
+def bin_ec(ec_path, pat_path, mat_path, name):
+    print(f"=== BINNING ECS FOR {name} ===")
+    pat_ids, mat_ids = set(), set()
+
+    print("Parsing pat yak...")
+    with open(pat_path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_record_row, rows)
+            for id, _ in tqdm(results, ncols=120):
+                pat_ids.add(id)
+
+    print("Parsing mat yak...")
+    with open(mat_path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_record_row, rows)
+            for id, _ in tqdm(results, ncols=120):
+                mat_ids.add(id)
+  
+    print("Parsing ec.fa...")
+    p_recs, m_recs = [], []
+    with open(ec_path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_record_row, rows)
+            for id, record in tqdm(results, ncols=120):
+                if id not in pat_ids and id not in mat_ids: raise Exception("missing read!")
+                if id in pat_ids: p_recs.append(record)
+                if id in mat_ids: m_recs.append(record)
+
+    print("Writing binned ecs...")
+    SeqIO.write(p_recs, f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}_p.ec.fa", 'fasta')
+    SeqIO.write(m_recs, f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}_m.ec.fa", 'fasta')
+
+    return
+        
+
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
@@ -1712,6 +1778,22 @@ if __name__ == "__main__":
     # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
     #     run_quast(n, type='res')
 
-    for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf', 'bonobo_d_20x_scaf', 'gorilla_d_20x_scaf', 'fruitfly_ont', 'tomato_ont', 'arab_ont']:
-        filter_out_kmers(n)
+    # for n in ['hg005_d_ont_scaf']:
+    #     filter_out_kmers(n)
 
+    # for n in ['arab', 'chicken', 'mouse', 'chm13', 'maize', 'hg002_d_20x_scaf_p', 'hg002_d_20x_scaf_m', 'bonobo_d_20x_scaf_p', 'bonobo_d_20x_scaf_m', 'gorilla_d_20x_scaf_p', 'gorilla_d_20x_scaf_m', 'arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf_p', 'hg005_d_ont_scaf_m', 'hg002_d_ont_scaf_p', 'hg002_d_ont_scaf_m', 'gorilla_d_ont_20x_scaf_p', 'gorilla_d_ont_20x_scaf_m']:
+    #     run_minimap_on_ref(config['genome_info'][n]['paths']['ref'], n)
+
+    # bin_ec(
+    #     ec_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/hg002_d_20x_scaf/hg002_d_20x_scaf.ec.fa',
+    #     pat_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/hg002/hg002_20x/paternal/hg002_20x_yak_P.fasta',
+    #     mat_path='/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/datasets/hg002/hg002_20x/maternal/hg002_20x_yak_M.fasta',
+    #     name='hg002_d_20x_scaf'
+    # )
+
+    for n in ['hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
+        print("running for", n)
+        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
+        res = parse_kmer_fasta(path)
+        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
+            pickle.dump(res, p)
