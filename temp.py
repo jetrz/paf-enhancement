@@ -1645,17 +1645,39 @@ def mers_dump(name):
 def parse_kmer(read):
     return str(read.seq), int(read.id)
 
-def parse_kmer_fasta(path):
-    print("Parsing kmer fasta...")
-    data = {}
-    with open(path, 'rt') as f:
-        rows = SeqIO.parse(f, 'fasta')
-        with Pool(40) as pool:
-            results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
-            for kmer, freq in tqdm(results, ncols=120):
-                data[kmer] = freq
+def parse_kmer_fasta(save_path):
+    os.makedirs(save_path+"chunks", exist_ok=True)
+    cmd = f"seqkit split -p 3 {save_path+"21mers.fa"} -O chunks/"
+    subprocess.run(cmd, shell=True, cwd=save_path[:-1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    return data
+    for i, file_name in enumerate(sorted(os.listdir(save_path+"chunks"))):
+        if not file_name.endswith(".fa"): continue
+        print(f"Parsing kmer fasta number {i}, Filename: {file_name}...")
+        data = {}
+        with open(save_path+file_name, 'rt') as f:
+            rows = SeqIO.parse(f, 'fasta')
+            with Pool(25) as pool:
+                results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
+                for kmer, freq in tqdm(results, ncols=120):
+                    data[kmer] = freq
+
+        with open(save_path+f"chunks/{file_name}.pkl", "wb") as p:
+            pickle.dump(data, p)
+
+        data.clear()
+
+    print("Merging...")
+    all_data = {}
+    for i, pkl_file in enumerate(sorted(glob(save_path+"chunks/*.pkl"))):
+        print(f"Loading file {i}, Filename: {pkl_file}")
+        with open(pkl_file, "rb") as f:
+            chunk_data = pickle.load(f)
+            all_data.update(chunk_data)
+
+    with open(save_path+"21mers.pkl", "wb") as p:
+        pickle.dump(all_data, p)
+
+    return 
 
 def filter_out_kmers(name):
     """
@@ -1791,7 +1813,7 @@ if __name__ == "__main__":
     #     name='hg002_d_20x_scaf'
     # )
 
-    for n in ['hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
+    for n in ['gorilla_d_ont_20x_scaf', 'hg002_d_ont_scaf']:
         print("running for", n)
         path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
         res = parse_kmer_fasta(path)
