@@ -1646,8 +1646,12 @@ def parse_kmer(read):
     return str(read.seq), int(read.id)
 
 def parse_kmer_fasta(save_path):
+    if shutil.which("seqkit") is None:
+        print("Seqkit is not installed/not in PATH!")
+        return
+
     os.makedirs(save_path+"chunks", exist_ok=True)
-    cmd = f"seqkit split -p 3 {save_path+"21mers.fa"} -O chunks/"
+    cmd = f"seqkit split -p 3 21mers.fa -O chunks/"
     subprocess.run(cmd, shell=True, cwd=save_path[:-1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     for i, file_name in enumerate(sorted(os.listdir(save_path+"chunks"))):
@@ -1656,7 +1660,7 @@ def parse_kmer_fasta(save_path):
         data = {}
         with open(save_path+file_name, 'rt') as f:
             rows = SeqIO.parse(f, 'fasta')
-            with Pool(25) as pool:
+            with Pool(30) as pool:
                 results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
                 for kmer, freq in tqdm(results, ncols=120):
                     data[kmer] = freq
@@ -1668,16 +1672,32 @@ def parse_kmer_fasta(save_path):
 
     print("Merging...")
     all_data = {}
-    for i, pkl_file in enumerate(sorted(glob(save_path+"chunks/*.pkl"))):
+    for i, pkl_file in enumerate(sorted(glob.glob(save_path+"chunks/*.pkl"))):
         print(f"Loading file {i}, Filename: {pkl_file}")
-        with open(pkl_file, "rb") as f:
+        with open(save_path+"chunks/"+pkl_file, "rb") as f:
             chunk_data = pickle.load(f)
             all_data.update(chunk_data)
 
     with open(save_path+"21mers.pkl", "wb") as p:
         pickle.dump(all_data, p)
 
+    # shutil.rmtree(save_path+"chunks")
     return 
+
+def parse_kmer_fasta_simple(save_path):
+    print("Parsing kmer fasta...")
+    data = {}
+    with open(save_path+"21mers.fa", 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(25) as pool:
+            results = pool.imap_unordered(parse_kmer, rows)
+            for kmer, freq in tqdm(results, ncols=120):
+                data[kmer] = freq
+
+    with open(save_path+"21mers.pkl", "wb") as p:
+        pickle.dump(data, p)
+
+    return
 
 def filter_out_kmers(name):
     """
@@ -1791,7 +1811,6 @@ def bin_ec(ec_path, pat_path, mat_path, name):
     SeqIO.write(m_recs, f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/{name}_m.ec.fa", 'fasta')
 
     return
-        
 
 if __name__ == "__main__":
     with open("config.yaml") as file:
@@ -1813,9 +1832,9 @@ if __name__ == "__main__":
     #     name='hg002_d_20x_scaf'
     # )
 
-    for n in ['gorilla_d_ont_20x_scaf', 'hg002_d_ont_scaf']:
+    for n in ['gorilla_d_ont_20x_scaf']:
         print("running for", n)
-        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.fa"
-        res = parse_kmer_fasta(path)
-        with open(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/21mers.pkl", "wb") as p:
-            pickle.dump(res, p)
+        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/"
+        parse_kmer_fasta_simple(path)
+
+    
