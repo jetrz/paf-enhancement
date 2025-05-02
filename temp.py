@@ -24,6 +24,11 @@ HAPLOID_TEST_REF = {
     'maize' : '/mnt/sod2-project/csb4/wgs/lovro/gnnome_assembly/references/zmays_Mo17/zmays_Mo17.fasta'
 }
 
+def timedelta_to_str(delta):
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f'{hours}h {minutes}m {seconds}s'
+
 def analyse(name, hop):
     print(f"\n=== ANALYSING FOR {name} ===\n")
     g = dgl.load_graphs(f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/paf-enhancement/graphs/ghost-1/{name}.dgl")[0][0]
@@ -1637,68 +1642,6 @@ def parse_fasta(path):
 
     return data
 
-def mers_dump(name):
-    print(f"=== DUMPING KMERS FOR {name} ===")
-    cmd = "jellyfish dump 21mers.jf > 21mers.fa"
-    subprocess.run(cmd, shell=True, cwd=f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/")
-
-def parse_kmer(read):
-    return str(read.seq), int(read.id)
-
-def parse_kmer_fasta(save_path):
-    if shutil.which("seqkit") is None:
-        print("Seqkit is not installed/not in PATH!")
-        return
-
-    os.makedirs(save_path+"chunks", exist_ok=True)
-    cmd = f"seqkit split -p 3 21mers.fa -O chunks/"
-    subprocess.run(cmd, shell=True, cwd=save_path[:-1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    for i, file_name in enumerate(sorted(os.listdir(save_path+"chunks"))):
-        if not file_name.endswith(".fa"): continue
-        print(f"Parsing kmer fasta number {i}, Filename: {file_name}...")
-        data = {}
-        with open(save_path+file_name, 'rt') as f:
-            rows = SeqIO.parse(f, 'fasta')
-            with Pool(30) as pool:
-                results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
-                for kmer, freq in tqdm(results, ncols=120):
-                    data[kmer] = freq
-
-        with open(save_path+f"chunks/{file_name}.pkl", "wb") as p:
-            pickle.dump(data, p)
-
-        data.clear()
-
-    print("Merging...")
-    all_data = {}
-    for i, pkl_file in enumerate(sorted(glob.glob(save_path+"chunks/*.pkl"))):
-        print(f"Loading file {i}, Filename: {pkl_file}")
-        with open(save_path+"chunks/"+pkl_file, "rb") as f:
-            chunk_data = pickle.load(f)
-            all_data.update(chunk_data)
-
-    with open(save_path+"21mers.pkl", "wb") as p:
-        pickle.dump(all_data, p)
-
-    # shutil.rmtree(save_path+"chunks")
-    return 
-
-def parse_kmer_fasta_simple(save_path):
-    print("Parsing kmer fasta...")
-    data = {}
-    with open(save_path+"21mers.fa", 'rt') as f:
-        rows = SeqIO.parse(f, 'fasta')
-        with Pool(25) as pool:
-            results = pool.imap_unordered(parse_kmer, rows)
-            for kmer, freq in tqdm(results, ncols=120):
-                data[kmer] = freq
-
-    with open(save_path+"21mers.pkl", "wb") as p:
-        pickle.dump(data, p)
-
-    return
-
 def filter_out_kmers(name):
     """
     Filters out kmers by frequency.
@@ -1812,6 +1755,139 @@ def bin_ec(ec_path, pat_path, mat_path, name):
 
     return
 
+import itertools
+
+def test_stream_jf():
+    timestart = datetime.now()
+
+    cmd = "jellyfish dump /mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/arab/21mers.jf -L 6 -U 53"
+    process = subprocess.Popen(
+        cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,  # Or use encoding='utf-8' for older Python versions
+        bufsize=1   # Line-buffered
+    )
+
+    freqs = {}
+    lines = iter(process.stdout)
+    while True:
+        pair = list(itertools.islice(lines, 2))
+        if not pair: break
+        freqs[pair[1]] = int(pair[0][1:])
+
+    process.wait()
+    
+    print(f"Done! (Time: {timedelta_to_str(datetime.now() - timestart)})")
+    return
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def char_to_int(c):
+    return {'A': 0, 'C': 1, 'G': 2, 'T': 3}[c]
+
+def hash_kmer(kmer):
+    h, base, mod = 0, 4, 2**61-1
+    for c in kmer:
+        h = (h * base + char_to_int(c)) % mod
+    return h
+
+def parse_kmer(read):
+    rev_kmer = read.seq.reverse_complement()
+    return hash_kmer(str(read.seq)), hash_kmer(str(rev_kmer)), int(read.id)
+
+    # return str(read.seq), int(read.id)
+
+def parse_kmer_fasta(path):
+    print("Parsing kmer fasta...")
+    data = {}
+    with open(path, 'rt') as f:
+        rows = SeqIO.parse(f, 'fasta')
+        with Pool(40) as pool:
+            results = pool.imap_unordered(parse_kmer, rows, chunksize=50)
+            for hash, rev_hash, freq in tqdm(results, ncols=120):
+                data[hash] = freq
+                data[rev_hash] = freq
+
+            # for kmer, freq in tqdm(results, ncols=120):
+            #     data[kmer] = freq
+
+    return data
+
+def dump_jf(name):
+    print(f"=== DUMPING JF FOR {name} ===")
+    save_path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{name}/21mers"
+
+    # Get lower and upper bounds, and plot the graph
+    cmd = f"jellyfish histo {save_path}.jf"
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = res.stdout.split("\n")
+    kmer_freqs = []
+    for s in res[:-1]:
+        split = [int(x) for x in s.split()]
+        kmer_freqs.extend([split[0]]*split[1])
+    cutoff = np.percentile(kmer_freqs, 99.5)
+    kmer_freqs = [i for i in kmer_freqs if i <= cutoff]
+    unique_kmer_freqs = np.array(list(set(kmer_freqs)))
+
+    freqs = Counter(kmer_freqs)
+    max_freq = np.max(unique_kmer_freqs)
+    values = np.array([freqs.get(i,0) for i in range(1, max_freq+1)])
+    minima_inds = argrelextrema(values, np.less)[0]
+
+    lower, upper = minima_inds[0]+1, None
+    kmer_freqs = [i for i in kmer_freqs if i > lower]
+    average = np.mean(kmer_freqs)
+    nearest_average = unique_kmer_freqs[(np.abs(unique_kmer_freqs - average)).argmin()]
+    for m in minima_inds:
+        if m > nearest_average-1:
+            upper = m+1
+            break
+    if upper is None: upper = len(values)
+
+    plt.figure(figsize=(10, 5))
+    x_indices = range(1, len(values) + 1)
+    plt.plot(x_indices, values)
+    plt.axvline(x=lower, color='r', linestyle='--', label=f'Lower Bound at {lower}')
+    plt.axvline(x=nearest_average, color='g', linestyle='--', label=f'Average at {nearest_average}')
+    plt.axvline(x=upper, color='b', linestyle='--', label=f'Upper Bound at {upper}')
+
+    plt.xlabel('Kmer Frequency')
+    plt.ylabel('# Kmers')
+    plt.savefig(save_path+".png")
+    plt.clf()
+
+    cmd = f"jellyfish dump {save_path}.jf -L {lower} -U {upper} -o {save_path}.fa"
+    subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    data = parse_kmer_fasta(save_path+".fa")
+    with open(f"{save_path}_hashed.pkl", "wb") as p:
+        pickle.dump(data, p)
+    os.remove(save_path+".fa")
+    return
+
 if __name__ == "__main__":
     with open("config.yaml") as file:
         config = yaml.safe_load(file)
@@ -1832,9 +1908,9 @@ if __name__ == "__main__":
     #     name='hg002_d_20x_scaf'
     # )
 
-    for n in ['gorilla_d_ont_20x_scaf']:
-        print("running for", n)
-        path = f"/mnt/sod2-project/csb4/wgs/lovro_interns/joshua/GAP/hifiasm/{n}/"
-        parse_kmer_fasta_simple(path)
+    # test_stream_jf()
 
-    
+    # for n in ['arab_ont', 'fruitfly_ont', 'tomato_ont', 'hg005_d_ont_scaf', 'hg002_d_ont_scaf', 'gorilla_d_ont_20x_scaf']:
+    #     dump_jf(n)
+
+    convert_fastq_to_fasta_ec('hg002_d_ont_scaf_v025')
